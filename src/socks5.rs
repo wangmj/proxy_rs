@@ -1,11 +1,10 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{ Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use hickory_resolver::Resolver;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -13,9 +12,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::socks5_proto::{
+use crate::{dns_resolver::{pick_fastet_ipadd, resolve_dns}, socks5_proto::{
     AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse,
-};
+}};
 pub struct Socks5Services {
     handlers: Arc<RwLock<Vec<JoinHandle<()>>>>,
     clean_interval_sec: usize,
@@ -171,20 +170,25 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
 
     match cmd {
         Cmd::Connect => {
-            let (mut socket, _domain_name) = connect(atyp, &address, port).await?;
-            response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
-            let response = response_builder.build();
-            log::trace!("response: {:?}",response);
-            let response=response.to_bytes();
-            print_vecu8(&response);
-            log::trace!(
-                "the response lens: {}, content is: {:?}",
-                response.len(),
-                response
-            );
-            stream.write_all(&response).await?;
-            stream.flush().await?;
-            transfer_data(stream, &mut socket).await;
+            match connect(atyp, &address, port).await {
+                Ok((mut socket, _domain_name)) => {
+                    response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
+                    let response = response_builder.build();
+                    log::trace!("response: {:?}", response);
+                    let response = response.to_bytes();
+                    stream.write_all(&response).await?;
+                    stream.flush().await?;
+                    transfer_data(stream, &mut socket).await;
+                }
+                Err(err) => {
+                    response_builder.rep(crate::socks5_proto::SocksResponseType::ConnectReject);
+                    stream
+                        .write_all(&response_builder.build().to_bytes())
+                        .await?;
+                    stream.flush().await?;
+                    return Err(err);
+                }
+            }
         }
         Cmd::Bind => todo!(),
         Cmd::Udp => todo!(),
@@ -278,46 +282,10 @@ async fn read_address(stream: &mut TcpStream) -> Result<(SocksAddressType, Vec<u
     }
 }
 
-async fn resolve_dns(domain_name: &str) -> Result<Vec<IpAddr>> {
-    let resolver = Resolver::builder_tokio()?.build();
-    let domain_name = match domain_name.ends_with(".") {
-        true => domain_name.to_string(),
-        false => format!("{}.", domain_name),
-    };
-    let response = resolver.lookup_ip(domain_name).await.unwrap();
-    let mut res = Vec::new();
-    for ip in response.iter() {
-        res.push(ip);
-    }
-    Ok(res)
-}
-
-async fn pick_fastet_ipadd(addrs: &[IpAddr], port: u16) -> Option<IpAddr> {
-    if addrs.len().eq(&0) {
-        return None;
-    }
-    if addrs.len().eq(&1) {
-        return Some(addrs[0].clone());
-    }
-
-    let mut result = Vec::with_capacity(addrs.len());
-    for ip in addrs {
-        let start = std::time::Instant::now();
-        let addr = (ip.clone(), port);
-        if TcpStream::connect(addr).await.is_ok() {
-            result.push((start.elapsed(), ip.clone()));
-        }
-    }
-
-    result.sort_by(|x1, x2| x1.0.cmp(&x2.0));
-    result.into_iter().next().map(|x| x.1)
-}
-
-
-fn print_vecu8(slice:&[u8]){
-   println!("************************\n 开始打印返回值\n");
+fn print_vecu8(slice: &[u8]) {
+    println!("************************\n 开始打印返回值\n");
     for v in slice {
-        print!("{:02x} ",v);
+        print!("{:02x} ", v);
     }
     print!("\n***************************\n打印结束\n");
 }
