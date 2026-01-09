@@ -27,7 +27,7 @@ impl DstType {
             DstType::DomainName(str) => str.len() + 2,
         }
     }
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn as_bytes(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(self.len());
         match self {
             DstType::Ipv4(ipv4_addr) => {
@@ -81,7 +81,7 @@ impl ConnectRequest {
         let mut v = Vec::with_capacity(total);
         // v.put_u8(total as u8);
         v.put_u16(self.dst_port);
-        v.put(self.dst_type.to_bytes().as_slice());
+        v.put(self.dst_type.as_bytes().as_slice());
         v
     }
     pub fn dst_type(&self) -> &DstType {
@@ -238,18 +238,18 @@ mod test{
     #[test]
     fn dsttype_test()->Result<()>{
         let t1=DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1));
-        let t1_bytes= t1.to_bytes();
+        let t1_bytes= t1.as_bytes();
         let t1_recovered= DstType::from_bytes(t1_bytes.as_slice())?;
         assert_eq!(t1,t1_recovered);
 
         let t2=DstType::DomainName("www.baidu.com".into());
-        let t2_bytes=t2.to_bytes();
+        let t2_bytes=t2.as_bytes();
         let t2_recovered=DstType::from_bytes(&t2_bytes)?;
         assert_eq!(t2,t2_recovered);
 
         let ipv6=Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
         let t3=DstType::Ipv6(ipv6);
-        let t3_bytes=t3.to_bytes();
+        let t3_bytes=t3.as_bytes();
         let t3_recovered=DstType::from_bytes(&t3_bytes)?;
         assert_eq!(t3,t3_recovered);
 
