@@ -102,7 +102,7 @@ impl SocksResponseBuilder {
         }
     }
 }
-
+#[allow(unused)]
 impl SocksResponse {
     pub(crate) fn builder() -> SocksResponseBuilder {
         SocksResponseBuilder {

@@ -5,8 +5,7 @@ async fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Trace)
         .init();
-    let socks = Socks5Services::new();
-    socks.clean().await;
+    let socks = Socks5Services::new().await;
     match socks.start().await {
         Ok(_) => {
             println!("start success!")

@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
 use std::{
     mem,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr},
 };
 
 use crate::socks5_proto::SocksAddressType;
@@ -15,7 +15,7 @@ pub(crate) struct ConnectRequest {
 }
 
 ///目标地址类型
-#[derive(Debug, PartialEq,Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum DstType {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
@@ -183,7 +183,7 @@ impl EthanResponse {
     fn lens(&self) -> usize {
         match &self.reason {
             Some(s) => s.len() + 2,
-            None => 0 + 1,
+            None => 1,
         }
     }
 }
@@ -194,7 +194,7 @@ impl TryFrom<&[u8]> for EthanResponse {
     fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
         let mut bytes = BytesMut::from(value);
         let res = bytes.get_u8();
-        let res = if res.eq(&0) { false } else { true };
+        let res = !res.eq(&0);
         let str_lens = bytes.get_u8();
         if str_lens > 0 {
             let _ = bytes.split_off(str_lens as usize);

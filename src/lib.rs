@@ -5,3 +5,4 @@ pub mod socks5;
 pub mod socks5_proto;
 pub mod dns_resolver;
 pub mod proxy_outbound;
+pub mod freedom;

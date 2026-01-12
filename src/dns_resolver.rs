@@ -22,15 +22,15 @@ pub async fn pick_fastet_ipadd(addrs: &[IpAddr], port: u16) -> Option<IpAddr> {
         return None;
     }
     if addrs.len().eq(&1) {
-        return Some(addrs[0].clone());
+        return Some(addrs[0]);
     }
 
     let mut result = Vec::with_capacity(addrs.len());
     for ip in addrs {
         let start = std::time::Instant::now();
-        let addr = (ip.clone(), port);
+        let addr = (*ip, port);
         if TcpStream::connect(addr).await.is_ok() {
-            result.push((start.elapsed(), ip.clone()));
+            result.push((start.elapsed(), *ip));
         }
     }
 

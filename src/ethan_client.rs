@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::mpsc::{Receiver, Sender},
 };
 
 use crate::{
@@ -18,29 +17,9 @@ pub struct EthanClient {
 }
 
 impl EthanClient {
-    pub(crate)  fn new(
-        addr: SocketAddr,
-        // notify_rv: Receiver<ConnectRequest>,
-        // socket_tx: Sender<Result<TcpStream>>,
-    ) -> Self {
-        let s = Self { server_addr: addr };
-        // s.rev_notify_send_socket(notify_rv, socket_tx).await;
-        s
+    pub(crate) fn new(addr: SocketAddr) -> Self {
+       Self { server_addr: addr }
     }
-
-    // async fn rev_notify_send_socket(
-    //     &self,
-    //     mut rv: Receiver<ConnectRequest>,
-    //     tx: Sender<Result<TcpStream>>,
-    // ) {
-    //     while let Some(connect_request) = rv.recv().await {
-    //         let socket = self.connect_server(connect_request).await;
-    //         match tx.send(socket).await {
-    //             Ok(_) => {}
-    //             Err(err) => log::error!("send socket to mpsc failed! {}", err),
-    //         }
-    //     }
-    // }
 }
 
 #[async_trait]
@@ -49,7 +28,7 @@ impl OutBoundClient for EthanClient {
         &self,
         connect_request: ConnectRequest,
     ) -> Result<tokio::net::TcpStream> {
-        let addr = self.server_addr.clone();
+        let addr = self.server_addr;
         let mut stream = TcpStream::connect(addr).await?;
         auth_request(&mut stream).await?;
         bind_request(
@@ -64,10 +43,10 @@ impl OutBoundClient for EthanClient {
 pub async fn auth_request(stream: &mut TcpStream) -> Result<()> {
     log::trace!("ethan client start auth with server");
     let auth_request = AuthRequest::new("uid".to_string(), "pwd".to_string());
-    let  auth_bytes = auth_request.as_bytes();
+    let auth_bytes = auth_request.as_bytes();
     // auth_bytes.insert(0, auth_bytes.len() as u8);
-    println!("{:?}",auth_bytes.len() as u8);
-    println!("{:?}",auth_bytes);
+    println!("{:?}", auth_bytes.len() as u8);
+    println!("{:?}", auth_bytes);
     stream.write_u8(auth_bytes.len() as u8).await?;
     stream.write_all(&auth_bytes).await?;
     log::trace!("ethan client send auth to server");

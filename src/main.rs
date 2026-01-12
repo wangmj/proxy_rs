@@ -1,11 +1,12 @@
 use proxy2_rs::socks5::Socks5Services;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Trace)
         .init();
 
-    let socks = Socks5Services::new();
+    let socks = Socks5Services::new().await;
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -14,7 +15,7 @@ fn main() {
         }
     };
     rt.block_on(async move {
-        socks.clean().await;
+        // socks.clean().await;
         match socks.start().await {
             Ok(_) => {
                 println!("start success!")

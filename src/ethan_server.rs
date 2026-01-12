@@ -1,4 +1,4 @@
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::SocketAddr;
 
 use anyhow::{Result, anyhow};
 use tokio::{
@@ -7,8 +7,8 @@ use tokio::{
 };
 
 use crate::{
-    dns_resolver::{pick_fastet_ipadd, resolve_dns},
     ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
+    proxy_outbound::OutBoundFactory,
 };
 
 pub struct EthanServer {
@@ -52,12 +52,11 @@ async fn handlstream(mut stream: TcpStream, addr: SocketAddr) {
 }
 
 async fn auth_handle(stream: &mut TcpStream) -> Result<()> {
-    // log::trace!("ethan server received client auth request,lens: {}",lens);
-    
     let lens = stream.read_u8().await? as usize;
+    log::trace!("ethan server received client auth request,lens: {}", lens);
     let mut buff = vec![0u8; lens];
     stream.read_exact(&mut buff).await?;
-    println!("{:?}",buff);
+    println!("{:?}", buff);
     let request = AuthRequest::try_from(buff.as_slice())?;
     log::trace!("ethan server received client auth request: {:?}", request);
     if request.uid().eq("uid") && request.pwd().eq("pwd") {
@@ -83,8 +82,8 @@ async fn bind_handle(in_stream: &mut TcpStream) -> Result<TcpStream> {
     in_stream.read_exact(&mut buff).await?;
     let request = ConnectRequest::try_from(buff.as_slice())?;
 
-    //todo:将此处换成工厂
-    match connect_server(&request).await {
+    let output_bound = OutBoundFactory::get(crate::proxy_outbound::OutBoundType::Freedom);
+    match output_bound.connect_server(request).await {
         Ok(out_stream) => {
             let response = EthanResponse::new(true, None);
             let bytes = response.as_bytes();
@@ -100,30 +99,4 @@ async fn bind_handle(in_stream: &mut TcpStream) -> Result<TcpStream> {
             Err(err)
         }
     }
-}
-
-async fn connect_server(request: &ConnectRequest) -> Result<TcpStream> {
-    let port = request.port();
-    let stream = match request.dst_type() {
-        crate::ethan_proto::DstType::Ipv4(ipv4_addr) => {
-            TcpStream::connect(SocketAddrV4::new(*ipv4_addr, port)).await?
-        }
-        crate::ethan_proto::DstType::Ipv6(ipv6_addr) => {
-            TcpStream::connect(SocketAddrV6::new(*ipv6_addr, port, 0, 0)).await?
-        }
-        crate::ethan_proto::DstType::DomainName(domain_name) => {
-            let addrs = resolve_dns(&domain_name).await?;
-            let ipaddr = match pick_fastet_ipadd(&addrs, port).await {
-                Some(ip) => ip,
-                None => {
-                    return Err(anyhow!(format!(
-                        "can't resovle domainName:{} with correct ip",
-                        domain_name
-                    )));
-                }
-            };
-            TcpStream::connect(SocketAddr::new(ipaddr, port)).await?
-        }
-    };
-    Ok(stream)
 }

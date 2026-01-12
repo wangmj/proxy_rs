@@ -1,6 +1,6 @@
 use std::{net::SocketAddrV4, str::FromStr};
 
-use crate::{ethan_client::EthanClient, ethan_proto::ConnectRequest};
+use crate::{ethan_client::EthanClient, ethan_proto::ConnectRequest, freedom::Freedom};
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::net::TcpStream;
@@ -12,6 +12,7 @@ pub(crate) trait OutBoundClient: Send + Sync {
 
 pub enum OutBoundType {
     Ethan,
+    Freedom,
 }
 pub struct OutBoundFactory;
 impl OutBoundFactory {
@@ -22,6 +23,7 @@ impl OutBoundFactory {
                     SocketAddrV4::from_str("127.0.0.1:10800").expect("convert to addr failed!");
                 Box::new(EthanClient::new(addr.into()))
             }
+            OutBoundType::Freedom => Box::new(Freedom),
         }
     }
 }

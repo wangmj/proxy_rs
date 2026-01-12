@@ -1,5 +1,4 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
@@ -13,7 +12,6 @@ use tokio::{
 };
 
 use crate::{
-    dns_resolver::{pick_fastet_ipadd, resolve_dns},
     ethan_proto::ConnectRequest,
     proxy_outbound::{OutBoundFactory, OutBoundType},
     socks5_proto::{
@@ -50,9 +48,9 @@ impl Socks5Services {
             }
         }
 
-        Ok(())
+        // Ok(())
     }
-    pub async fn clean(&self) {
+     async fn clean(&self) {
         let handlers = self.handlers.clone();
         let sleep_sec = self.clean_interval_sec as u64;
         tokio::spawn(async move {
@@ -78,12 +76,12 @@ impl Socks5Services {
             }
         });
     }
-    pub fn new() -> Self {
+    pub async  fn new() -> Self {
         let s = Self {
             handlers: Arc::new(RwLock::new(Vec::new())),
             clean_interval_sec: 10,
         };
-        let _ = s.clean();
+        s.clean().await;
         s
     }
 }
@@ -119,7 +117,7 @@ async fn auth_handle(stream: &mut TcpStream) -> Result<()> {
         log::error!("{}", msg);
         return Err(anyhow!(msg));
     }
-    let auth_methods_from_client: Vec<_> = buff.iter().map(|m| AuthMethod::from(m)).collect();
+    let auth_methods_from_client: Vec<_> = buff.iter().map( AuthMethod::from).collect();
     log::trace!(
         "client support auth methods:{:?}",
         &auth_methods_from_client
@@ -184,26 +182,6 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
             stream.write_all(&response).await?;
             stream.flush().await?;
             transfer_data(stream, &mut outbound_stream).await;
-            //todo: 在此处向ehtan——client发出消息，并等待创建并已经建立好连接的socket返回,已完成，待验证
-            // match connect(atyp, &address, port).await {
-            //     Ok((mut socket, _domain_name)) => {
-            //         response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
-            //         let response = response_builder.build();
-            //         log::trace!("response: {:?}", response);
-            //         let response = response.to_bytes();
-            //         stream.write_all(&response).await?;
-            //         stream.flush().await?;
-            //         transfer_data(stream, &mut socket).await;
-            //     }
-            //     Err(err) => {
-            //         response_builder.rep(crate::socks5_proto::SocksResponseType::ConnectReject);
-            //         stream
-            //             .write_all(&response_builder.build().to_bytes())
-            //             .await?;
-            //         stream.flush().await?;
-            //         return Err(err);
-            //     }
-            // }
         }
         Cmd::Bind => todo!(),
         Cmd::Udp => todo!(),
@@ -222,43 +200,6 @@ async fn transfer_data(in_stream: &mut TcpStream, out_stream: &mut TcpStream) {
     }
 }
 
-/// connect to the address, and then return the socket and domainName if atyp is Domain.
-async fn connect(
-    atyp: SocksAddressType,
-    address: &[u8],
-    port: u16,
-) -> Result<(TcpStream, Option<String>)> {
-    let mut domain_name = None;
-    let addr: SocketAddr = match atyp {
-        SocksAddressType::Ipv4 => {
-            let ipv4 = Ipv4Addr::new(address[0], address[1], address[2], address[3]);
-            SocketAddrV4::new(ipv4, port).into()
-        }
-        SocksAddressType::Domain => {
-            let domain = String::from_utf8_lossy(address);
-            domain_name = Some(domain.to_string());
-            let addrs = resolve_dns(&domain).await?;
-            let ipaddr = match pick_fastet_ipadd(&addrs, port).await {
-                Some(ip) => ip,
-                None => {
-                    return Err(anyhow!(format!(
-                        "can't resovle domainName:{} with correct ip",
-                        domain
-                    )));
-                }
-            };
-            log::info!("pick the fast for domain:{}, ip: {}", domain, ipaddr);
-            SocketAddr::new(ipaddr, port)
-        }
-        SocksAddressType::Ipv6 => {
-            let add: [u8; 16] = address.try_into().unwrap_or([0u8; 16]);
-            let ipv6 = Ipv6Addr::from(add);
-            SocketAddrV6::new(ipv6, port, 0, 0).into()
-        }
-    };
-    let stream = TcpStream::connect(addr).await?;
-    Ok((stream, domain_name))
-}
 fn find_both_support_auth_method(
     client_auth_methods: &[AuthMethod],
     server_auth_methods: &[AuthMethod],
@@ -295,12 +236,4 @@ async fn read_address(stream: &mut TcpStream) -> Result<(SocksAddressType, Vec<u
         }
         _ => Err(anyhow!(format!("unkonw atyp: {}", t))),
     }
-}
-
-fn print_vecu8(slice: &[u8]) {
-    println!("************************\n 开始打印返回值\n");
-    for v in slice {
-        print!("{:02x} ", v);
-    }
-    print!("\n***************************\n打印结束\n");
 }
