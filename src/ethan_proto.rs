@@ -2,18 +2,20 @@ use anyhow::{Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
 use std::{
     mem,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
+use crate::socks5_proto::SocksAddressType;
+
 ///连接指令
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct ConnectRequest {
     dst_port: u16,
     dst_type: DstType,
 }
 
 ///目标地址类型
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq,Clone)]
 pub(crate) enum DstType {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
@@ -53,7 +55,7 @@ impl DstType {
 
     pub fn from_bytes(val: &[u8]) -> Result<Self> {
         let mut bytes = BytesMut::from(val);
-       
+
         let flag = bytes.get_u8();
         match flag {
             1u8 => Ok(Self::Ipv4(Ipv4Addr::from_bits(bytes.get_u32()))),
@@ -64,7 +66,7 @@ impl DstType {
                 let domain_name = String::from_utf8_lossy(&bytes[..lens]);
                 Ok(Self::DomainName(domain_name.to_string()))
             }
-            _other => Err(anyhow!("unknown flag: {}",flag)),
+            _other => Err(anyhow!("unknown flag: {}", flag)),
         }
     }
 }
@@ -106,8 +108,42 @@ impl TryFrom<&[u8]> for ConnectRequest {
     }
 }
 
+impl TryFrom<(SocksAddressType, &[u8], u16)> for ConnectRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: (SocksAddressType, &[u8], u16)) -> std::result::Result<Self, Self::Error> {
+        let (arty, address, port) = value;
+        match arty {
+            SocksAddressType::Ipv4 => {
+                let ipv4 = Ipv4Addr::new(address[0], address[1], address[2], address[3]);
+                Ok(Self {
+                    dst_port: port,
+                    dst_type: DstType::Ipv4(ipv4),
+                })
+            }
+            SocksAddressType::Domain => {
+                let dn = String::from_utf8_lossy(address);
+                Ok(Self {
+                    dst_port: port,
+                    dst_type: DstType::DomainName(dn.to_string()),
+                })
+            }
+            SocksAddressType::Ipv6 => {
+                let add: [u8; 16] = address.try_into().unwrap_or([0u8; 16]);
+                let ipv6 = Ipv6Addr::from(add);
+                Ok(Self {
+                    dst_port: port,
+                    dst_type: DstType::Ipv6(ipv6),
+                })
+            }
+        }
+
+        // todo!()
+    }
+}
+
 ///连接结果
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct EthanResponse {
     res: bool,
     reason: Option<String>,
@@ -173,6 +209,7 @@ impl TryFrom<&[u8]> for EthanResponse {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct AuthRequest {
     uid: String,
     pwd: String,
@@ -215,79 +252,80 @@ impl TryFrom<&[u8]> for AuthRequest {
     }
 }
 
-
 #[cfg(test)]
-mod test{
+mod test {
     use std::str::FromStr;
 
     use super::*;
     use anyhow::Result;
 
     #[test]
-    fn auth_request_test()->Result<()>{
-        let request=AuthRequest::new("uid".into(), "pwd".into());
-        let bytes= request.as_bytes();
-        let request2= AuthRequest::try_from(bytes.as_slice())?;
-        assert_eq!(request.pwd,request2.pwd);
-        assert_eq!(request.uid,request2.uid);
-        assert_eq!(request2.pwd,"pwd");
-        assert_eq!(request2.uid,"uid");
+    fn auth_request_test() -> Result<()> {
+        let request = AuthRequest::new("uid".into(), "pwd".into());
+        let bytes = request.as_bytes();
+        let request2 = AuthRequest::try_from(bytes.as_slice())?;
+        assert_eq!(request.pwd, request2.pwd);
+        assert_eq!(request.uid, request2.uid);
+        assert_eq!(request2.pwd, "pwd");
+        assert_eq!(request2.uid, "uid");
         Ok(())
     }
 
     #[test]
-    fn dsttype_test()->Result<()>{
-        let t1=DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1));
-        let t1_bytes= t1.as_bytes();
-        let t1_recovered= DstType::from_bytes(t1_bytes.as_slice())?;
-        assert_eq!(t1,t1_recovered);
+    fn dsttype_test() -> Result<()> {
+        let t1 = DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1));
+        let t1_bytes = t1.as_bytes();
+        let t1_recovered = DstType::from_bytes(t1_bytes.as_slice())?;
+        assert_eq!(t1, t1_recovered);
 
-        let t2=DstType::DomainName("www.baidu.com".into());
-        let t2_bytes=t2.as_bytes();
-        let t2_recovered=DstType::from_bytes(&t2_bytes)?;
-        assert_eq!(t2,t2_recovered);
+        let t2 = DstType::DomainName("www.baidu.com".into());
+        let t2_bytes = t2.as_bytes();
+        let t2_recovered = DstType::from_bytes(&t2_bytes)?;
+        assert_eq!(t2, t2_recovered);
 
-        let ipv6=Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
-        let t3=DstType::Ipv6(ipv6);
-        let t3_bytes=t3.as_bytes();
-        let t3_recovered=DstType::from_bytes(&t3_bytes)?;
-        assert_eq!(t3,t3_recovered);
-
-        Ok(())
-    }
-
-    #[test]
-    fn connect_request_test()->Result<()>{
-        let domain_connect_request=ConnectRequest::new(9000, DstType::DomainName("www.baidu.com".into()));
-        let tmp= domain_connect_request.as_bytes();
-        let domain_connect_request2= ConnectRequest::try_from(tmp.as_slice())?;
-        assert_eq!(domain_connect_request,domain_connect_request2);
-
-        let ipv4_connect_request=ConnectRequest::new(8000, DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1)));
-        let tmp=ipv4_connect_request.as_bytes();
-        let ipv4_connect_request2=ConnectRequest::try_from(tmp.as_slice())?;
-        assert_eq!(ipv4_connect_request,ipv4_connect_request2);
-
-        let ipv6=Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
-        let ipv6_connect_request=ConnectRequest::new(1000, DstType::Ipv6(ipv6));
-        let tmp=ipv6_connect_request.as_bytes();
-        let ipv6_connect_request2=ConnectRequest::try_from(tmp.as_slice())?;
-        assert_eq!(ipv6_connect_request,ipv6_connect_request2);
+        let ipv6 = Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
+        let t3 = DstType::Ipv6(ipv6);
+        let t3_bytes = t3.as_bytes();
+        let t3_recovered = DstType::from_bytes(&t3_bytes)?;
+        assert_eq!(t3, t3_recovered);
 
         Ok(())
     }
 
     #[test]
-    fn response_rest()->Result<()>{
-        let response=EthanResponse::new(true, None);
-        let bytes= response.as_bytes();
-        let response2= EthanResponse::try_from(bytes.as_slice())?;
-        assert_eq!(response,response2);
+    fn connect_request_test() -> Result<()> {
+        let domain_connect_request =
+            ConnectRequest::new(9000, DstType::DomainName("www.baidu.com".into()));
+        let tmp = domain_connect_request.as_bytes();
+        let domain_connect_request2 = ConnectRequest::try_from(tmp.as_slice())?;
+        assert_eq!(domain_connect_request, domain_connect_request2);
 
-        let false_response=EthanResponse::new(false, Some("failed message".into()));
-        let bytes=false_response.as_bytes();
-        let false_response2=EthanResponse::try_from(bytes.as_slice())?;
-        assert_eq!(false_response,false_response2);
+        let ipv4_connect_request =
+            ConnectRequest::new(8000, DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1)));
+        let tmp = ipv4_connect_request.as_bytes();
+        let ipv4_connect_request2 = ConnectRequest::try_from(tmp.as_slice())?;
+        assert_eq!(ipv4_connect_request, ipv4_connect_request2);
+
+        let ipv6 = Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
+        let ipv6_connect_request = ConnectRequest::new(1000, DstType::Ipv6(ipv6));
+        let tmp = ipv6_connect_request.as_bytes();
+        let ipv6_connect_request2 = ConnectRequest::try_from(tmp.as_slice())?;
+        assert_eq!(ipv6_connect_request, ipv6_connect_request2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn response_rest() -> Result<()> {
+        let response = EthanResponse::new(true, None);
+        let bytes = response.as_bytes();
+        let response2 = EthanResponse::try_from(bytes.as_slice())?;
+        assert_eq!(response, response2);
+
+        let false_response = EthanResponse::new(false, Some("failed message".into()));
+        let bytes = false_response.as_bytes();
+        let false_response2 = EthanResponse::try_from(bytes.as_slice())?;
+        assert_eq!(false_response, false_response2);
 
         Ok(())
     }

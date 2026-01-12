@@ -1,57 +1,84 @@
 use std::net::SocketAddr;
 
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::mpsc::{Receiver, Sender},
 };
 
-use crate::ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse};
+use crate::{
+    ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
+    proxy_outbound::OutBoundClient,
+};
 
 pub struct EthanClient {
     server_addr: SocketAddr,
 }
 
 impl EthanClient {
-    pub async fn connect_server(&self) -> Result<TcpStream> {
-        let stream = TcpStream::connect(self.server_addr).await?;
-        Ok(stream)
-    }
-
-    pub async fn new(
+    pub(crate)  fn new(
         addr: SocketAddr,
-        notify_rv: Receiver<String>,
-        socket_tx: Sender<TcpStream>,
+        // notify_rv: Receiver<ConnectRequest>,
+        // socket_tx: Sender<Result<TcpStream>>,
     ) -> Self {
         let s = Self { server_addr: addr };
-        s.rev_notify_send_socket(notify_rv, socket_tx).await;
+        // s.rev_notify_send_socket(notify_rv, socket_tx).await;
         s
     }
 
-    async fn rev_notify_send_socket(&self, mut rv: Receiver<String>, tx: Sender<TcpStream>) {
-        while let Some(msg) = rv.recv().await {
-            if !msg.is_empty() {
-                let socket = self.connect_server().await.expect("get socket failed!");
-                match tx.send(socket).await {
-                    Ok(_) => {}
-                    Err(err) => log::error!("send socket to mpsc failed! {}", err),
-                }
-            }
-        }
+    // async fn rev_notify_send_socket(
+    //     &self,
+    //     mut rv: Receiver<ConnectRequest>,
+    //     tx: Sender<Result<TcpStream>>,
+    // ) {
+    //     while let Some(connect_request) = rv.recv().await {
+    //         let socket = self.connect_server(connect_request).await;
+    //         match tx.send(socket).await {
+    //             Ok(_) => {}
+    //             Err(err) => log::error!("send socket to mpsc failed! {}", err),
+    //         }
+    //     }
+    // }
+}
+
+#[async_trait]
+impl OutBoundClient for EthanClient {
+    async fn connect_server(
+        &self,
+        connect_request: ConnectRequest,
+    ) -> Result<tokio::net::TcpStream> {
+        let addr = self.server_addr.clone();
+        let mut stream = TcpStream::connect(addr).await?;
+        auth_request(&mut stream).await?;
+        bind_request(
+            &mut stream,
+            connect_request.port(),
+            connect_request.dst_type(),
+        )
+        .await?;
+        Ok(stream)
     }
 }
-pub async fn auth(stream: &mut TcpStream) -> Result<()> {
+pub async fn auth_request(stream: &mut TcpStream) -> Result<()> {
+    log::trace!("ethan client start auth with server");
     let auth_request = AuthRequest::new("uid".to_string(), "pwd".to_string());
-    let mut auth_bytes = auth_request.as_bytes();
-    auth_bytes.insert(0, auth_bytes.len() as u8);
+    let  auth_bytes = auth_request.as_bytes();
+    // auth_bytes.insert(0, auth_bytes.len() as u8);
+    println!("{:?}",auth_bytes.len() as u8);
+    println!("{:?}",auth_bytes);
+    stream.write_u8(auth_bytes.len() as u8).await?;
     stream.write_all(&auth_bytes).await?;
+    log::trace!("ethan client send auth to server");
 
     let len = stream.read_u8().await? as usize;
     let mut buff = vec![0u8; len];
     stream.read_exact(&mut buff).await?;
+    log::trace!("ethan client received server auth response");
     let response = EthanResponse::try_from(&buff[..])?;
     if response.res() {
+        log::trace!("ethan client received server auth response: success");
         Ok(())
     } else {
         Err(anyhow!(
@@ -64,15 +91,15 @@ pub async fn auth(stream: &mut TcpStream) -> Result<()> {
     }
 }
 
-pub(crate) async fn bind_request(stream: &mut TcpStream, port: u16, dst: DstType) -> Result<()> {
-    let ccmd = ConnectRequest::new(port, dst);
+pub(crate) async fn bind_request(stream: &mut TcpStream, port: u16, dst: &DstType) -> Result<()> {
+    let ccmd = ConnectRequest::new(port, dst.clone());
     let ccmd_bytes = ccmd.as_bytes();
     stream.write_u8(ccmd_bytes.len() as u8).await?;
     stream.write_all(&ccmd_bytes).await?;
 
     let len = stream.read_u8().await?;
     let mut buff = vec![0u8; len as usize];
-    stream.read_buf(&mut buff).await?;
+    stream.read_exact(&mut buff).await?;
     let response = EthanResponse::try_from(&buff[..])?;
     if response.res() {
         Ok(())

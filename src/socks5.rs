@@ -1,5 +1,5 @@
 use std::{
-    net::{ Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
@@ -12,9 +12,14 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{dns_resolver::{pick_fastet_ipadd, resolve_dns}, socks5_proto::{
-    AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse,
-}};
+use crate::{
+    dns_resolver::{pick_fastet_ipadd, resolve_dns},
+    ethan_proto::ConnectRequest,
+    proxy_outbound::{OutBoundFactory, OutBoundType},
+    socks5_proto::{
+        AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse,
+    },
+};
 pub struct Socks5Services {
     handlers: Arc<RwLock<Vec<JoinHandle<()>>>>,
     clean_interval_sec: usize,
@@ -84,7 +89,7 @@ impl Socks5Services {
 }
 
 async fn handlestream(mut stream: TcpStream) -> Result<()> {
-    auth(&mut stream).await?;
+    auth_handle(&mut stream).await?;
 
     bind_remote(&mut stream).await?;
     Ok(())
@@ -100,12 +105,12 @@ async fn valid_socks_ver(stream: &mut TcpStream) -> Result<()> {
     log::trace!("the socks version is correct!");
     Ok(())
 }
-async fn auth(stream: &mut TcpStream) -> Result<()> {
+async fn auth_handle(stream: &mut TcpStream) -> Result<()> {
     valid_socks_ver(stream).await?;
     log::trace!("start auth");
     let method_lens = stream.read_u8().await? as usize;
     let mut buff = vec![0u8; method_lens];
-    let _n = stream.read_buf(&mut buff).await?;
+    let _n = stream.read_exact(&mut buff).await?;
     if !_n.eq(&method_lens) {
         let msg = format!(
             "received client support method failed! received lens:{} not eq defined lens:{}",
@@ -170,25 +175,35 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
 
     match cmd {
         Cmd::Connect => {
-            match connect(atyp, &address, port).await {
-                Ok((mut socket, _domain_name)) => {
-                    response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
-                    let response = response_builder.build();
-                    log::trace!("response: {:?}", response);
-                    let response = response.to_bytes();
-                    stream.write_all(&response).await?;
-                    stream.flush().await?;
-                    transfer_data(stream, &mut socket).await;
-                }
-                Err(err) => {
-                    response_builder.rep(crate::socks5_proto::SocksResponseType::ConnectReject);
-                    stream
-                        .write_all(&response_builder.build().to_bytes())
-                        .await?;
-                    stream.flush().await?;
-                    return Err(err);
-                }
-            }
+            let outbound = OutBoundFactory::get(OutBoundType::Ethan);
+            let connect_request = ConnectRequest::try_from((atyp, address.as_slice(), port))?;
+            let mut outbound_stream = outbound.connect_server(connect_request).await?;
+            response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
+            let response = response_builder.build();
+            let response = response.to_bytes();
+            stream.write_all(&response).await?;
+            stream.flush().await?;
+            transfer_data(stream, &mut outbound_stream).await;
+            //todo: 在此处向ehtan——client发出消息，并等待创建并已经建立好连接的socket返回,已完成，待验证
+            // match connect(atyp, &address, port).await {
+            //     Ok((mut socket, _domain_name)) => {
+            //         response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
+            //         let response = response_builder.build();
+            //         log::trace!("response: {:?}", response);
+            //         let response = response.to_bytes();
+            //         stream.write_all(&response).await?;
+            //         stream.flush().await?;
+            //         transfer_data(stream, &mut socket).await;
+            //     }
+            //     Err(err) => {
+            //         response_builder.rep(crate::socks5_proto::SocksResponseType::ConnectReject);
+            //         stream
+            //             .write_all(&response_builder.build().to_bytes())
+            //             .await?;
+            //         stream.flush().await?;
+            //         return Err(err);
+            //     }
+            // }
         }
         Cmd::Bind => todo!(),
         Cmd::Udp => todo!(),

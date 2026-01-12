@@ -671,6 +671,7 @@ name = "proxy2_rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "env_logger",
  "hickory-resolver",
