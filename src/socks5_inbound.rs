@@ -1,9 +1,8 @@
-use std::{
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
+
+use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -12,45 +11,22 @@ use tokio::{
 };
 
 use crate::{
+    app_config::SocksInBoundConfig,
     ethan_proto::ConnectRequest,
-    proxy_outbound::{OutBoundFactory, OutBoundType},
+    factory::outbound_factory::*,
     socks5_proto::{
         AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse,
     },
+    traits::proxy_inbound::InBoundProxy,
 };
-pub struct Socks5Services {
+pub struct Socks5InBound {
+    config: Arc<SocksInBoundConfig>,
     handlers: Arc<RwLock<Vec<JoinHandle<()>>>>,
     clean_interval_sec: usize,
 }
 
-impl Socks5Services {
-    pub async fn start(&self) -> Result<()> {
-        let listener_port = 1080;
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", listener_port)).await?;
-        log::info!(
-            "socks5 start listening on port:{}",
-            listener
-                .local_addr()
-                .expect("failed get local addr on socks5")
-        );
-        loop {
-            if let Ok((stream, addr)) = listener.accept().await {
-                log::info!("received stream from addr:{}", &addr);
-                let t = tokio::spawn(async move {
-                    match handlestream(stream).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            log::error!("there is an error when handle stream, {}", err);
-                        }
-                    }
-                });
-                self.handlers.write().await.push(t);
-            }
-        }
-
-        // Ok(())
-    }
-     async fn clean(&self) {
+impl Socks5InBound {
+    fn clean(&self) {
         let handlers = self.handlers.clone();
         let sleep_sec = self.clean_interval_sec as u64;
         tokio::spawn(async move {
@@ -76,18 +52,59 @@ impl Socks5Services {
             }
         });
     }
-    pub async  fn new() -> Self {
+    pub fn new(config: Arc<SocksInBoundConfig>) -> Self {
         let s = Self {
+            config,
             handlers: Arc::new(RwLock::new(Vec::new())),
             clean_interval_sec: 10,
         };
-        s.clean().await;
+        s.clean();
         s
     }
 }
 
-async fn handlestream(mut stream: TcpStream) -> Result<()> {
-    auth_handle(&mut stream).await?;
+#[async_trait]
+impl InBoundProxy for Socks5InBound {
+    async fn start(&self) {
+        let listener_port = self.config.port();
+        let listener = TcpListener::bind(format!("0.0.0.0:{}", listener_port))
+            .await
+            .expect("failed to start listen");
+        log::info!(
+            "socks5 start listening on port:{}",
+            listener
+                .local_addr()
+                .expect("failed get local addr on socks5")
+        );
+        let uid = Arc::new(self.config.uid().map(|x| x.to_string()));
+        let pwd = Arc::new(self.config.pwd().map(|x| x.to_string()));
+        loop {
+            let uid = uid.clone();
+            let pwd = pwd.clone();
+            if let Ok((stream, addr)) = listener.accept().await {
+                log::info!("received stream from addr:{}", &addr);
+                let t = tokio::spawn(async move {
+                    match handlestream(stream, uid, pwd).await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            log::error!("there is an error when handle stream, {}", err);
+                        }
+                    }
+                });
+                self.handlers.write().await.push(t);
+            }
+        }
+
+        // Ok(())
+    }
+}
+
+async fn handlestream(
+    mut stream: TcpStream,
+    uid: Arc<Option<String>>,
+    pwd: Arc<Option<String>>,
+) -> Result<()> {
+    auth_handle(&mut stream, uid, pwd).await?;
 
     bind_remote(&mut stream).await?;
     Ok(())
@@ -103,7 +120,11 @@ async fn valid_socks_ver(stream: &mut TcpStream) -> Result<()> {
     log::trace!("the socks version is correct!");
     Ok(())
 }
-async fn auth_handle(stream: &mut TcpStream) -> Result<()> {
+async fn auth_handle(
+    stream: &mut TcpStream,
+    _uid: Arc<Option<String>>,
+    _pwd: Arc<Option<String>>,
+) -> Result<()> {
     valid_socks_ver(stream).await?;
     log::trace!("start auth");
     let method_lens = stream.read_u8().await? as usize;
@@ -117,7 +138,7 @@ async fn auth_handle(stream: &mut TcpStream) -> Result<()> {
         log::error!("{}", msg);
         return Err(anyhow!(msg));
     }
-    let auth_methods_from_client: Vec<_> = buff.iter().map( AuthMethod::from).collect();
+    let auth_methods_from_client: Vec<_> = buff.iter().map(AuthMethod::from).collect();
     log::trace!(
         "client support auth methods:{:?}",
         &auth_methods_from_client

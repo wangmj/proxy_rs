@@ -1,29 +1,37 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
 use crate::{
+    app_config::EthanInBoundConfig,
     ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
-    proxy_outbound::OutBoundFactory,
+    factory::outbound_factory::{OutBoundFactory, OutBoundType},
+    traits::proxy_inbound::InBoundProxy,
 };
 
-pub struct EthanServer {
-    listen_port: u16,
+pub struct EthanInBound {
+    config: Arc<EthanInBoundConfig>,
 }
 
-impl EthanServer {
-    pub fn new(port: u16) -> Self {
-        Self { listen_port: port }
+impl EthanInBound {
+    pub fn new(config: Arc<EthanInBoundConfig>) -> Self {
+        Self { config }
     }
-    pub async fn start(&self) {
-        let listener = TcpListener::bind(("0.0.0.0", self.listen_port))
+}
+
+#[async_trait]
+impl InBoundProxy for EthanInBound {
+    async fn start(&self) {
+        let port = self.config.port();
+        let listener = TcpListener::bind(("0.0.0.0", port))
             .await
             .expect("failed to start listen");
-        log::trace!("ethan server start listening at port: {}", self.listen_port);
+        log::trace!("ethan server start listening at port: {}", port);
         while let Ok((stream, addr)) = listener.accept().await {
             //todo: 此处没有将正在处理的线程保存，所以在停止时可能会导致正在处理的数据丢失。
             handlstream(stream, addr).await;
@@ -82,7 +90,7 @@ async fn bind_handle(in_stream: &mut TcpStream) -> Result<TcpStream> {
     in_stream.read_exact(&mut buff).await?;
     let request = ConnectRequest::try_from(buff.as_slice())?;
 
-    let output_bound = OutBoundFactory::get(crate::proxy_outbound::OutBoundType::Freedom);
+    let output_bound = OutBoundFactory::get(OutBoundType::Freedom);
     match output_bound.connect_server(request).await {
         Ok(out_stream) => {
             let response = EthanResponse::new(true, None);

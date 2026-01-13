@@ -9,21 +9,21 @@ use tokio::{
 
 use crate::{
     ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
-    proxy_outbound::OutBoundClient,
+    traits::proxy_outbound::OutBoundProxy,
 };
 
-pub struct EthanClient {
+pub struct EthanOutBound {
     server_addr: SocketAddr,
 }
 
-impl EthanClient {
+impl EthanOutBound {
     pub(crate) fn new(addr: SocketAddr) -> Self {
        Self { server_addr: addr }
     }
 }
 
 #[async_trait]
-impl OutBoundClient for EthanClient {
+impl OutBoundProxy for EthanOutBound {
     async fn connect_server(
         &self,
         connect_request: ConnectRequest,

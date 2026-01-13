@@ -1,18 +1,24 @@
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use crate::{dns_resolver::{pick_fastet_ipadd, resolve_dns}, ethan_proto::{ConnectRequest, DstType}, proxy_outbound::OutBoundClient};
-use anyhow::{Result,anyhow};
+use crate::{
+    dns_resolver::{pick_fastet_ipadd, resolve_dns},
+    ethan_proto::{ConnectRequest, DstType},
+    traits::proxy_outbound::OutBoundProxy,
+};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tokio::net::TcpStream;
 
 pub struct Freedom;
 
 #[async_trait]
-impl OutBoundClient for Freedom {
+impl OutBoundProxy for Freedom {
     async fn connect_server(&self, connect_request: ConnectRequest) -> Result<TcpStream> {
-        let port=connect_request.port();
+        let port = connect_request.port();
         let stream = match connect_request.dst_type() {
-            DstType::Ipv4(ipv4_addr) => TcpStream::connect(SocketAddrV4::new(*ipv4_addr, port)).await?,
+            DstType::Ipv4(ipv4_addr) => {
+                TcpStream::connect(SocketAddrV4::new(*ipv4_addr, port)).await?
+            }
             DstType::Ipv6(ipv6_addr) => {
                 TcpStream::connect(SocketAddrV6::new(*ipv6_addr, port, 0, 0)).await?
             }
