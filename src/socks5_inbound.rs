@@ -215,7 +215,7 @@ async fn transfer_data(in_stream: &mut TcpStream, out_stream: &mut TcpStream) {
     log::trace!("starting transfer data");
     match tokio::io::copy_bidirectional(in_stream, out_stream).await {
         Ok(n) => {
-            println!("copied {}:{} bites", n.0, n.1);
+            log::trace!("copied {}:{} bites", n.0, n.1);
         }
         Err(err) => log::warn!("copied occured error, {}", err),
     }

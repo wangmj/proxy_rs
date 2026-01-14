@@ -105,18 +105,18 @@ impl SocksInBoundConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct EthanInBoundConfig {
     port: u16,
-    uid: Option<String>,
-    pwd: Option<String>,
+    uid:String,
+    pwd: String,
 }
 impl EthanInBoundConfig {
     pub fn port(&self) -> u16 {
         self.port
     }
-    pub fn uid(&self) -> Option<String> {
-        self.uid.as_ref().map(|x| x.to_string())
+    pub fn uid(&self) -> &str {
+        &self.uid
     }
-    pub fn pwd(&self) -> Option<String> {
-        self.pwd.as_ref().map(|x| x.to_string())
+    pub fn pwd(&self) -> &str {
+        &self.pwd
     }
 }
 
@@ -156,17 +156,25 @@ where
 }
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum OutputBoundTypeConfig {
-    Ethan(EthanOutputConfig),
+    Ethan(EthanOutBoundConfig),
     Freedom(FreedomOutputConfig),
 }
 #[derive(Debug,Clone, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct EthanOutputConfig {
+pub struct EthanOutBoundConfig {
     addr: String,
     port: u16,
-    uid: Option<String>,
-    pwd: Option<String>,
+    uid: String,
+    pwd: String,
 }
-impl EthanOutputConfig {
+impl EthanOutBoundConfig{
+    pub fn uid(&self)->&str{
+        &self.uid
+    }
+    pub fn pwd(&self)->&str{
+        &self.pwd
+    }
+}
+impl EthanOutBoundConfig {
     pub async fn socket_addr(&self) -> Result<SocketAddr> {
         let ipaddr: IpAddr;
         if let Ok(ipv4) = self.addr.parse::<Ipv4Addr>() {
@@ -203,7 +211,7 @@ where
 
     match protocol.as_str() {
         "ethan" => {
-            let ethan: EthanOutputConfig =
+            let ethan: EthanOutBoundConfig =
                 toml::from_str(&config_str).map_err(|e| serde::de::Error::custom(e.to_string()))?;
             Ok(OutputBoundTypeConfig::Ethan(ethan))
         }
@@ -261,7 +269,7 @@ mod test {
             InBoundTypeConfig::Socks5(socks_input_config)
         );
 
-        let ethan_output_config = EthanOutputConfig {
+        let ethan_output_config = EthanOutBoundConfig {
             addr: "127.0.0.1".into(),
             port: 10800,
             uid: Some("ethan.wang".into()),

@@ -32,16 +32,18 @@ impl InBoundProxy for EthanInBound {
             .await
             .expect("failed to start listen");
         log::trace!("ethan server start listening at port: {}", port);
+        let config=self.config.clone();
         while let Ok((stream, addr)) = listener.accept().await {
             //todo: 此处没有将正在处理的线程保存，所以在停止时可能会导致正在处理的数据丢失。
-            handlstream(stream, addr).await;
+            handlstream(stream, addr,config.clone()).await;
         }
     }
 }
-async fn handlstream(mut stream: TcpStream, addr: SocketAddr) {
+async fn handlstream(mut stream: TcpStream, addr: SocketAddr,config:Arc<EthanInBoundConfig>) {
     log::trace!("ethan server rev connect, remote :{:?}", addr);
+    
     tokio::spawn(async move {
-        if auth_handle(&mut stream).await.is_err() {
+        if auth_handle(&mut stream,config).await.is_err() {
             log::error!("ethan server rev auth request, but failed!");
             return;
         }
@@ -50,24 +52,25 @@ async fn handlstream(mut stream: TcpStream, addr: SocketAddr) {
             .expect("bind to server failed");
         match tokio::io::copy_bidirectional(&mut stream, &mut out_stream).await {
             Ok((n, m)) => {
-                println!("copied {}:{} bites", n, m)
+                log::trace!("copied {}:{} bites", n, m)
             }
             Err(err) => {
-                eprintln!("data transfer broken out with error: {}", err);
+                log::error!("data transfer broken out with error: {}", err);
             }
         }
     });
 }
 
-async fn auth_handle(stream: &mut TcpStream) -> Result<()> {
+async fn auth_handle(stream: &mut TcpStream,config:Arc<EthanInBoundConfig>) -> Result<()> {
     let lens = stream.read_u8().await? as usize;
     log::trace!("ethan server received client auth request,lens: {}", lens);
     let mut buff = vec![0u8; lens];
     stream.read_exact(&mut buff).await?;
-    println!("{:?}", buff);
     let request = AuthRequest::try_from(buff.as_slice())?;
     log::trace!("ethan server received client auth request: {:?}", request);
-    if request.uid().eq("uid") && request.pwd().eq("pwd") {
+    let uid_in_config=config.uid();
+    let pwd_in_config=config.pwd();
+    if request.uid().eq(uid_in_config) && request.pwd().eq(pwd_in_config) {
         let response = EthanResponse::new(true, None);
         let response = response.as_bytes();
         stream.write_u8(response.len() as u8).await?;

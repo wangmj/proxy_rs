@@ -8,17 +8,17 @@ use tokio::{
 };
 
 use crate::{
-    app_config::EthanOutputConfig,
+    app_config::EthanOutBoundConfig,
     ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
     traits::proxy_outbound::OutBoundProxy,
 };
 
 pub struct EthanOutBound {
-    config: Arc<EthanOutputConfig>,
+    config: Arc<EthanOutBoundConfig>,
 }
 
 impl EthanOutBound {
-    pub(crate) fn new(config: Arc<EthanOutputConfig>) -> Self {
+    pub(crate) fn new(config: Arc<EthanOutBoundConfig>) -> Self {
         Self { config }
     }
 }
@@ -31,7 +31,7 @@ impl OutBoundProxy for EthanOutBound {
     ) -> Result<tokio::net::TcpStream> {
         let addr = self.config.socket_addr().await?;
         let mut stream = TcpStream::connect(addr).await?;
-        auth_request(&mut stream).await?;
+        auth_request(&mut stream, self.config.clone()).await?;
         bind_request(
             &mut stream,
             connect_request.port(),
@@ -41,13 +41,11 @@ impl OutBoundProxy for EthanOutBound {
         Ok(stream)
     }
 }
-pub async fn auth_request(stream: &mut TcpStream) -> Result<()> {
+pub async fn auth_request(stream: &mut TcpStream, config: Arc<EthanOutBoundConfig>) -> Result<()> {
     log::trace!("ethan client start auth with server");
-    let auth_request = AuthRequest::new("uid".to_string(), "pwd".to_string());
+
+    let auth_request = AuthRequest::new(config.uid().to_string(), config.pwd().to_string());
     let auth_bytes = auth_request.as_bytes();
-    // auth_bytes.insert(0, auth_bytes.len() as u8);
-    println!("{:?}", auth_bytes.len() as u8);
-    println!("{:?}", auth_bytes);
     stream.write_u8(auth_bytes.len() as u8).await?;
     stream.write_all(&auth_bytes).await?;
     log::trace!("ethan client send auth to server");
