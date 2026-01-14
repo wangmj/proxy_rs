@@ -11,7 +11,7 @@ use tokio::{
 };
 
 use crate::{
-    app_config::SocksInBoundConfig,
+    app_config::{APP_CONFIG, SocksInBoundConfig},
     ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
     socks5_proto::{
@@ -194,7 +194,7 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
 
     match cmd {
         Cmd::Connect => {
-            let outbound = OutBoundFactory::get(OutBoundType::Ethan);
+            let outbound = OutBoundFactory::get(APP_CONFIG.outbound());
             let connect_request = ConnectRequest::try_from((atyp, address.as_slice(), port))?;
             let mut outbound_stream = outbound.connect_server(connect_request).await?;
             response_builder.rep(crate::socks5_proto::SocksResponseType::Success);

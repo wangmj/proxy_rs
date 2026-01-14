@@ -3,6 +3,7 @@ use clap::{Parser};
 
 #[derive(Debug,Parser)]
 pub struct StartArgs{
+    #[arg(short,long,help="config file path")]
     config:Option<PathBuf>
 }
 impl StartArgs{

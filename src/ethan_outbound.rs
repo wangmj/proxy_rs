@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -8,17 +8,18 @@ use tokio::{
 };
 
 use crate::{
+    app_config::EthanOutputConfig,
     ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
     traits::proxy_outbound::OutBoundProxy,
 };
 
 pub struct EthanOutBound {
-    server_addr: SocketAddr,
+    config: Arc<EthanOutputConfig>,
 }
 
 impl EthanOutBound {
-    pub(crate) fn new(addr: SocketAddr) -> Self {
-       Self { server_addr: addr }
+    pub(crate) fn new(config: Arc<EthanOutputConfig>) -> Self {
+        Self { config }
     }
 }
 
@@ -28,7 +29,7 @@ impl OutBoundProxy for EthanOutBound {
         &self,
         connect_request: ConnectRequest,
     ) -> Result<tokio::net::TcpStream> {
-        let addr = self.server_addr;
+        let addr = self.config.socket_addr().await?;
         let mut stream = TcpStream::connect(addr).await?;
         auth_request(&mut stream).await?;
         bind_request(

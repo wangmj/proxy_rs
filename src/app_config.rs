@@ -1,9 +1,25 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use clap::Parser;
 use serde::{Deserialize, Deserializer};
 use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
+    env, net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}, path::{Path, PathBuf}, str::FromStr, sync::LazyLock
 };
+
+use crate::{dns_resolver::{pick_fastet_ipadd, resolve_dns}, start_args::StartArgs};
+pub static APP_CONFIG:LazyLock<AppConfig>=LazyLock::new(||{get_app_config_from_args()});
+
+fn get_app_config_from_args()->AppConfig{
+     let args = StartArgs::parse();
+    let config_path = match args.config() {
+        Some(path) => path.clone(),
+        None => {
+            let current_dir = env::current_dir().expect("get current directory failed!");
+            current_dir.join("config.toml")
+        }
+    };
+    let config_content = std::fs::read_to_string(config_path).expect("read config content failed!");
+    AppConfig::from_str(&config_content).expect("config format is incorrect.")
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct AppConfig {
@@ -143,14 +159,31 @@ pub enum OutputBoundTypeConfig {
     Ethan(EthanOutputConfig),
     Freedom(FreedomOutputConfig),
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug,Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct EthanOutputConfig {
     addr: String,
     port: u16,
     uid: Option<String>,
     pwd: Option<String>,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+impl EthanOutputConfig {
+    pub async fn socket_addr(&self) -> Result<SocketAddr> {
+        let ipaddr: IpAddr;
+        if let Ok(ipv4) = self.addr.parse::<Ipv4Addr>() {
+            ipaddr = ipv4.into();
+        } else if let Ok(ipv6) = self.addr.parse::<Ipv6Addr>() {
+            ipaddr = ipv6.into();
+        } else {
+            let ips = resolve_dns(&self.addr).await?;
+            match pick_fastet_ipadd(&ips, self.port).await {
+                Some(ip) => ipaddr = ip,
+                None => return Err(anyhow!("根据域名：{}未能解析道IP地址", self.addr)),
+            }
+        }
+        Ok(SocketAddr::new(ipaddr, self.port))
+    }
+}
+#[derive(Debug,Clone,Copy, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct FreedomOutputConfig;
 
 #[derive(Debug, serde::Deserialize)]

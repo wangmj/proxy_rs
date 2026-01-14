@@ -8,9 +8,9 @@ use tokio::{
 };
 
 use crate::{
-    app_config::EthanInBoundConfig,
+    app_config::{APP_CONFIG, EthanInBoundConfig},
     ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
-    factory::outbound_factory::{OutBoundFactory, OutBoundType},
+    factory::outbound_factory::{OutBoundFactory},
     traits::proxy_inbound::InBoundProxy,
 };
 
@@ -90,7 +90,7 @@ async fn bind_handle(in_stream: &mut TcpStream) -> Result<TcpStream> {
     in_stream.read_exact(&mut buff).await?;
     let request = ConnectRequest::try_from(buff.as_slice())?;
 
-    let output_bound = OutBoundFactory::get(OutBoundType::Freedom);
+    let output_bound = OutBoundFactory::get(APP_CONFIG.outbound());
     match output_bound.connect_server(request).await {
         Ok(out_stream) => {
             let response = EthanResponse::new(true, None);
