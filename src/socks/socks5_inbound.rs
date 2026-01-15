@@ -12,10 +12,10 @@ use tokio::{
 
 use crate::{
     app_config::{APP_CONFIG, SocksInBoundConfig},
-    ethan_proto::ConnectRequest,
+    ethan::ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
-    socks5_proto::{
-        AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse,
+    socks::socks5_proto::{
+        AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse, SocksResponseType,
     },
     traits::proxy_inbound::InBoundProxy,
 };
@@ -197,7 +197,7 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
             let outbound = OutBoundFactory::get(APP_CONFIG.outbound());
             let connect_request = ConnectRequest::try_from((atyp, address.as_slice(), port))?;
             let mut outbound_stream = outbound.connect_server(connect_request).await?;
-            response_builder.rep(crate::socks5_proto::SocksResponseType::Success);
+            response_builder.rep(SocksResponseType::Success);
             let response = response_builder.build();
             let response = response.to_bytes();
             stream.write_all(&response).await?;

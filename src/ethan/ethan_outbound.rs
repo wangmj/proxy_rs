@@ -9,7 +9,7 @@ use tokio::{
 
 use crate::{
     app_config::EthanOutBoundConfig,
-    ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
+    ethan::ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
     traits::proxy_outbound::OutBoundProxy,
 };
 

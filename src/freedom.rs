@@ -2,7 +2,7 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use crate::{
     dns_resolver::{pick_fastet_ipadd, resolve_dns},
-    ethan_proto::{ConnectRequest, DstType},
+    ethan::ethan_proto::{ConnectRequest, DstType},
     traits::proxy_outbound::OutBoundProxy,
 };
 use anyhow::{Result, anyhow};

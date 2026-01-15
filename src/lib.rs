@@ -1,8 +1,5 @@
-pub mod ethan_outbound;
-pub mod ethan_proto;
-pub mod ethan_inbound;
-pub mod socks5_inbound;
-pub mod socks5_proto;
+pub mod ethan;
+pub mod socks;
 pub mod dns_resolver;
 pub mod traits;
 pub mod freedom;

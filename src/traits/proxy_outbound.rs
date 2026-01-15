@@ -1,4 +1,4 @@
-use crate::ethan_proto::ConnectRequest;
+use crate::ethan::ethan_proto::ConnectRequest;
 use anyhow::Result;
 use async_trait::async_trait;
 use tokio::net::TcpStream;

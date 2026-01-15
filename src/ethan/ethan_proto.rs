@@ -5,7 +5,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use crate::socks5_proto::SocksAddressType;
+use crate::socks::socks5_proto::SocksAddressType;
 
 ///连接指令
 #[derive(Debug, PartialEq)]

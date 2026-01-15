@@ -9,8 +9,8 @@ use tokio::{
 
 use crate::{
     app_config::{APP_CONFIG, EthanInBoundConfig},
-    ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
-    factory::outbound_factory::{OutBoundFactory},
+    ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
+    factory::outbound_factory::OutBoundFactory,
     traits::proxy_inbound::InBoundProxy,
 };
 
@@ -32,18 +32,18 @@ impl InBoundProxy for EthanInBound {
             .await
             .expect("failed to start listen");
         log::trace!("ethan server start listening at port: {}", port);
-        let config=self.config.clone();
+        let config = self.config.clone();
         while let Ok((stream, addr)) = listener.accept().await {
             //todo: 此处没有将正在处理的线程保存，所以在停止时可能会导致正在处理的数据丢失。
-            handlstream(stream, addr,config.clone()).await;
+            handlstream(stream, addr, config.clone()).await;
         }
     }
 }
-async fn handlstream(mut stream: TcpStream, addr: SocketAddr,config:Arc<EthanInBoundConfig>) {
+async fn handlstream(mut stream: TcpStream, addr: SocketAddr, config: Arc<EthanInBoundConfig>) {
     log::trace!("ethan server rev connect, remote :{:?}", addr);
-    
+
     tokio::spawn(async move {
-        if auth_handle(&mut stream,config).await.is_err() {
+        if auth_handle(&mut stream, config).await.is_err() {
             log::error!("ethan server rev auth request, but failed!");
             return;
         }
@@ -61,15 +61,15 @@ async fn handlstream(mut stream: TcpStream, addr: SocketAddr,config:Arc<EthanInB
     });
 }
 
-async fn auth_handle(stream: &mut TcpStream,config:Arc<EthanInBoundConfig>) -> Result<()> {
+async fn auth_handle(stream: &mut TcpStream, config: Arc<EthanInBoundConfig>) -> Result<()> {
     let lens = stream.read_u8().await? as usize;
     log::trace!("ethan server received client auth request,lens: {}", lens);
     let mut buff = vec![0u8; lens];
     stream.read_exact(&mut buff).await?;
     let request = AuthRequest::try_from(buff.as_slice())?;
     log::trace!("ethan server received client auth request: {:?}", request);
-    let uid_in_config=config.uid();
-    let pwd_in_config=config.pwd();
+    let uid_in_config = config.uid();
+    let pwd_in_config = config.pwd();
     if request.uid().eq(uid_in_config) && request.pwd().eq(pwd_in_config) {
         let response = EthanResponse::new(true, None);
         let response = response.as_bytes();
