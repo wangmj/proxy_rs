@@ -114,7 +114,7 @@ pub struct EthanInBoundConfig {
     port: u16,
     uid: String,
     pwd: String,
-    tls: TlsServerConfig, 
+    tls: TlsServerConfig,
 }
 impl EthanInBoundConfig {
     pub fn tls(&self) -> &TlsServerConfig {
@@ -176,7 +176,7 @@ pub struct EthanOutBoundConfig {
     port: u16,
     uid: String,
     pwd: String,
-    tls:TlsClientConfig
+    tls: TlsClientConfig,
 }
 impl EthanOutBoundConfig {
     pub fn uid(&self) -> &str {
@@ -185,7 +185,7 @@ impl EthanOutBoundConfig {
     pub fn pwd(&self) -> &str {
         &self.pwd
     }
-    pub fn tls(&self)->&TlsClientConfig{
+    pub fn tls(&self) -> &TlsClientConfig {
         &self.tls
     }
 }
@@ -238,20 +238,19 @@ where
     }
 }
 
-#[derive(Debug,serde::Serialize,Deserialize,Clone,PartialEq)]
-pub struct TlsServerConfig{
-  pub use_tls:bool,
-  pub crt_path:Option<PathBuf>,//公钥存放地址,
-  pub key_path:Option<PathBuf>,//私钥存放地址
-  pub domain_name:Option<String>,//域名
+#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
+pub struct TlsServerConfig {
+    pub use_tls: bool,
+    pub crt_path: Option<PathBuf>,   //公钥存放地址,
+    pub key_path: Option<PathBuf>,   //私钥存放地址
+    pub domain_name: Option<String>, //域名
 }
 
-#[derive(Debug,serde::Serialize,Deserialize,Clone,PartialEq)]
-pub struct TlsClientConfig{
-    pub use_tls:bool,
-    pub domain_name:Option<String>,
-    pub crt_path:Option<PathBuf>,//如果是信任的密钥，则可以忽略
-
+#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
+pub struct TlsClientConfig {
+    pub use_tls: bool,
+    pub domain_name: Option<String>,
+    pub crt_path: Option<PathBuf>, //如果是信任的密钥，则可以忽略
 }
 #[cfg(test)]
 mod test {
@@ -278,7 +277,7 @@ mod test {
         port = 10800
         addr = "127.0.0.1"
         [outbound.tls]
-        use_tls=false
+        use_tls=true
         domain_name="localhost"
         crt_path="localhost.crt"
 "##;
@@ -308,7 +307,11 @@ mod test {
             port: 10800,
             uid: "ethan.wang".into(),
             pwd: "pass01!".into(),
-            tls:TlsClientConfig { use_tls: true, domain_name: Some("localhost".into()), crt_path: Some("localhost.crt".into()) }
+            tls: TlsClientConfig {
+                use_tls: true,
+                domain_name: Some("localhost".into()),
+                crt_path: Some("localhost.crt".into()),
+            },
         };
         assert_eq!(
             appconfig.outbound,
@@ -327,6 +330,13 @@ mod test {
         [inbound]
         protocol = "ethan"
         port = 10800
+        uid = "uid"
+        pwd = "pwd"
+        [inbound.tls]
+        use_tls = true
+        crt_path = "localhost.crt"
+        key_path = "localhost.key"
+        domain_name = "localhost"
 
         [outbound]
         protocol = "freedom"
@@ -334,8 +344,14 @@ mod test {
         let config = AppConfig::from_str(&str)?;
         let ethan = EthanInBoundConfig {
             port: 10800,
-            uid: None,
-            pwd: None,
+            uid: "uid".to_string(),
+            pwd: "pwd".to_string(),
+            tls: TlsServerConfig {
+                use_tls: true,
+                crt_path: Some("localhost.crt".into()),
+                key_path: Some("localhost.key".into()),
+                domain_name: Some("localhost".into()),
+            },
         };
         assert_eq!(config.inbound, InBoundTypeConfig::Ethan(ethan));
 
