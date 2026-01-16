@@ -3,7 +3,7 @@ use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use crate::{
     dns_resolver::{pick_fastet_ipadd, resolve_dns},
     ethan::ethan_proto::{ConnectRequest, DstType},
-    traits::proxy_outbound::OutBoundProxy,
+    traits::{async_read_write::AsyncReadWrite, proxy_outbound::OutBoundProxy},
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -13,7 +13,10 @@ pub struct Freedom;
 
 #[async_trait]
 impl OutBoundProxy for Freedom {
-    async fn connect_server(&self, connect_request: ConnectRequest) -> Result<TcpStream> {
+    async fn connect_server(
+        &self,
+        connect_request: ConnectRequest,
+    ) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
         let port = connect_request.port();
         let stream = match connect_request.dst_type() {
             DstType::Ipv4(ipv4_addr) => {
@@ -36,6 +39,6 @@ impl OutBoundProxy for Freedom {
                 TcpStream::connect(SocketAddr::new(ipaddr, port)).await?
             }
         };
-        Ok(stream)
+        Ok(Box::new(stream))
     }
 }

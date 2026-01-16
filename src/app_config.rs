@@ -2,14 +2,21 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use serde::{Deserialize, Deserializer};
 use std::{
-    env, net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}, path::{Path, PathBuf}, str::FromStr, sync::LazyLock
+    env,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::LazyLock,
 };
 
-use crate::{dns_resolver::{pick_fastet_ipadd, resolve_dns}, start_args::StartArgs};
-pub static APP_CONFIG:LazyLock<AppConfig>=LazyLock::new(||{get_app_config_from_args()});
+use crate::{
+    dns_resolver::{pick_fastet_ipadd, resolve_dns},
+    start_args::StartArgs,
+};
+pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
 
-fn get_app_config_from_args()->AppConfig{
-     let args = StartArgs::parse();
+fn get_app_config_from_args() -> AppConfig {
+    let args = StartArgs::parse();
     let config_path = match args.config() {
         Some(path) => path.clone(),
         None => {
@@ -105,10 +112,14 @@ impl SocksInBoundConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct EthanInBoundConfig {
     port: u16,
-    uid:String,
+    uid: String,
     pwd: String,
+    tls: TlsServerConfig, 
 }
 impl EthanInBoundConfig {
+    pub fn tls(&self) -> &TlsServerConfig {
+        &self.tls
+    }
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -159,19 +170,23 @@ pub enum OutputBoundTypeConfig {
     Ethan(EthanOutBoundConfig),
     Freedom(FreedomOutputConfig),
 }
-#[derive(Debug,Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct EthanOutBoundConfig {
     addr: String,
     port: u16,
     uid: String,
     pwd: String,
+    tls:TlsClientConfig
 }
-impl EthanOutBoundConfig{
-    pub fn uid(&self)->&str{
+impl EthanOutBoundConfig {
+    pub fn uid(&self) -> &str {
         &self.uid
     }
-    pub fn pwd(&self)->&str{
+    pub fn pwd(&self) -> &str {
         &self.pwd
+    }
+    pub fn tls(&self)->&TlsClientConfig{
+        &self.tls
     }
 }
 impl EthanOutBoundConfig {
@@ -191,7 +206,7 @@ impl EthanOutBoundConfig {
         Ok(SocketAddr::new(ipaddr, self.port))
     }
 }
-#[derive(Debug,Clone,Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct FreedomOutputConfig;
 
 #[derive(Debug, serde::Deserialize)]
@@ -223,6 +238,21 @@ where
     }
 }
 
+#[derive(Debug,serde::Serialize,Deserialize,Clone,PartialEq)]
+pub struct TlsServerConfig{
+  pub use_tls:bool,
+  pub crt_path:Option<PathBuf>,//公钥存放地址,
+  pub key_path:Option<PathBuf>,//私钥存放地址
+  pub domain_name:Option<String>,//域名
+}
+
+#[derive(Debug,serde::Serialize,Deserialize,Clone,PartialEq)]
+pub struct TlsClientConfig{
+    pub use_tls:bool,
+    pub domain_name:Option<String>,
+    pub crt_path:Option<PathBuf>,//如果是信任的密钥，则可以忽略
+
+}
 #[cfg(test)]
 mod test {
 
@@ -247,6 +277,10 @@ mod test {
         pwd = "pass01!"
         port = 10800
         addr = "127.0.0.1"
+        [outbound.tls]
+        use_tls=false
+        domain_name="localhost"
+        crt_path="localhost.crt"
 "##;
         let appconfig = AppConfig::from_str(config)?;
         assert_eq!(appconfig.log.access.level, "trace");
@@ -272,8 +306,9 @@ mod test {
         let ethan_output_config = EthanOutBoundConfig {
             addr: "127.0.0.1".into(),
             port: 10800,
-            uid: Some("ethan.wang".into()),
-            pwd: Some("pass01!".into()),
+            uid: "ethan.wang".into(),
+            pwd: "pass01!".into(),
+            tls:TlsClientConfig { use_tls: true, domain_name: Some("localhost".into()), crt_path: Some("localhost.crt".into()) }
         };
         assert_eq!(
             appconfig.outbound,

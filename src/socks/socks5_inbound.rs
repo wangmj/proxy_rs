@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 
 use async_trait::async_trait;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::RwLock,
     task::JoinHandle,
@@ -15,7 +15,8 @@ use crate::{
     ethan::ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
     socks::socks5_proto::{
-        AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse, SocksResponseType,
+        AuthMethod, Cmd, SERVER_SUPPORTED_AUTHS, SOCKS_VERSION, SocksAddressType, SocksResponse,
+        SocksResponseType,
     },
     traits::proxy_inbound::InBoundProxy,
 };
@@ -211,7 +212,11 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
     Ok(())
 }
 
-async fn transfer_data(in_stream: &mut TcpStream, out_stream: &mut TcpStream) {
+async fn transfer_data<A, B>(in_stream: &mut A, out_stream: &mut B)
+where
+    A: AsyncRead + AsyncWrite + Unpin + ?Sized,
+    B: AsyncRead + AsyncWrite + Unpin + ?Sized,
+{
     log::trace!("starting transfer data");
     match tokio::io::copy_bidirectional(in_stream, out_stream).await {
         Ok(n) => {

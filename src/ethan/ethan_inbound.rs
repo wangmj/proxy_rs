@@ -6,12 +6,16 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+use tokio_rustls::rustls::{
+    ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+};
 
 use crate::{
-    app_config::{APP_CONFIG, EthanInBoundConfig},
+    app_config::{APP_CONFIG, EthanInBoundConfig, TlsServerConfig},
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     factory::outbound_factory::OutBoundFactory,
-    traits::proxy_inbound::InBoundProxy,
+    traits::{async_read_write::AsyncReadWrite, proxy_inbound::InBoundProxy},
 };
 
 pub struct EthanInBound {
@@ -35,22 +39,32 @@ impl InBoundProxy for EthanInBound {
         let config = self.config.clone();
         while let Ok((stream, addr)) = listener.accept().await {
             //todo: 此处没有将正在处理的线程保存，所以在停止时可能会导致正在处理的数据丢失。
+            //等待再次考虑
             handlstream(stream, addr, config.clone()).await;
         }
     }
 }
 async fn handlstream(mut stream: TcpStream, addr: SocketAddr, config: Arc<EthanInBoundConfig>) {
     log::trace!("ethan server rev connect, remote :{:?}", addr);
-
+    let config = config.clone();
     tokio::spawn(async move {
-        if auth_handle(&mut stream, config).await.is_err() {
+        if auth_handle(&mut stream, config.clone()).await.is_err() {
             log::error!("ethan server rev auth request, but failed!");
             return;
         }
         let mut out_stream = bind_handle(&mut stream)
             .await
             .expect("bind to server failed");
-        match tokio::io::copy_bidirectional(&mut stream, &mut out_stream).await {
+        let tls_config = config.tls();
+        let mut stream = {
+            if tls_config.use_tls {
+                wraptls(stream, tls_config).await.unwrap()
+            } else {
+                Box::new(stream)
+            }
+        };
+
+        match tokio::io::copy_bidirectional(&mut *stream, &mut out_stream).await {
             Ok((n, m)) => {
                 log::trace!("copied {}:{} bites", n, m)
             }
@@ -87,7 +101,7 @@ async fn auth_handle(stream: &mut TcpStream, config: Arc<EthanInBoundConfig>) ->
     }
 }
 
-async fn bind_handle(in_stream: &mut TcpStream) -> Result<TcpStream> {
+async fn bind_handle(in_stream: &mut TcpStream) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
     let lens = in_stream.read_u8().await? as usize;
     let mut buff = vec![0u8; lens];
     in_stream.read_exact(&mut buff).await?;
@@ -110,4 +124,40 @@ async fn bind_handle(in_stream: &mut TcpStream) -> Result<TcpStream> {
             Err(err)
         }
     }
+}
+
+async fn wraptls(
+    stream: TcpStream,
+    tls_config: &TlsServerConfig,
+) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
+    log::trace!("server start wrap tls!");
+    if tls_config.crt_path.is_none()
+        || tls_config.key_path.is_none()
+        || tls_config.domain_name.is_none()
+    {
+        return Err(anyhow!(
+            "use tls, crt path, key path, domain name must has value"
+        ));
+    }
+    let key_path = match tls_config.key_path {
+        Some(ref k) => k.clone(),
+        None => return Err(anyhow!("key path can't null")),
+    };
+    let crt_path = match tls_config.crt_path {
+        Some(ref k) => k.clone(),
+        None => return Err(anyhow!("crt path can't null")),
+    };
+    let _domain_name = match tls_config.domain_name {
+        Some(ref d) => d.clone(),
+        None => return Err(anyhow!("domain name can't null")),
+    };
+    let crt = CertificateDer::from_pem_file(crt_path)?;
+    let key = PrivateKeyDer::from_pem_file(key_path)?;
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert([crt].to_vec(), key)?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+    let accept = acceptor.accept(stream).await?;
+    log::trace!("server  wrap stream with tls success!");
+    Ok(Box::new(accept))
 }
