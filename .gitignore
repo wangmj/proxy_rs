@@ -1,2 +1,5 @@
 /target
+/examples/certs
+/log
 .DS_Store
+Cargo.lock

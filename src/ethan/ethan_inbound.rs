@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{fs::File, io::BufReader, net::SocketAddr, path::Path, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -8,7 +8,6 @@ use tokio::{
 };
 use tokio_rustls::rustls::{
     ServerConfig,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 
 use crate::{
@@ -151,13 +150,84 @@ async fn wraptls(
         Some(ref d) => d.clone(),
         None => return Err(anyhow!("domain name can't null")),
     };
-    let crt = CertificateDer::from_pem_file(crt_path)?;
-    let key = PrivateKeyDer::from_pem_file(key_path)?;
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert([crt].to_vec(), key)?;
+    
+    let config= get_tsl_server_config(&crt_path,&key_path).await?;
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
     let accept = acceptor.accept(stream).await?;
     log::trace!("server  wrap stream with tls success!");
     Ok(Box::new(accept))
+}
+
+async fn get_tsl_server_config(crt_path: &Path, key_path: &Path) -> Result<ServerConfig> {
+    let fullchain = File::open(crt_path)?;
+    let mut cert_reader = BufReader::new(fullchain);
+    let cert_chain = rustls_pemfile::certs(&mut cert_reader).into_iter().collect::<Vec<_>>();
+    let mut certs = Vec::with_capacity(cert_chain.len());
+    for ct in cert_chain {
+        if let Ok(c) = ct {
+            certs.push(c);
+        }
+    }
+
+    let key = File::open(key_path)?;
+    let mut key_reader = BufReader::new(key);
+    let priv_key = rustls_pemfile::private_key(&mut key_reader)?;
+    let priv_key = match priv_key {
+        Some(pk) => pk,
+        None => {
+            return Err(anyhow!("not found private key"));
+        }
+    };
+    let config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, priv_key)?;
+    Ok(config)
+}
+
+#[cfg(test)]
+mod test {
+    use std::{
+        env,
+    };
+
+
+    use super::*;
+
+    #[tokio::test]
+    async fn load_tls_server_config_test() -> Result<()> {
+        let base_path = env::current_dir()?;
+        let fullchain_path = base_path.join("examples/certs/fullchain.pem");
+        let key_path = base_path.join("examples/certs/privkey.pem");
+
+        let _config= get_tsl_server_config(&fullchain_path,&key_path).await?;
+
+        // println!("{}", fullchain_path.display());
+        // let fullchain = File::open(fullchain_path)?;
+        // let mut cert_reader = BufReader::new(fullchain);
+        // let cert_chain = certs(&mut cert_reader).into_iter().collect::<Vec<_>>();
+        // let mut certs = Vec::with_capacity(cert_chain.len());
+        // for ct in cert_chain {
+        //     if let Ok(c) = ct {
+        //         certs.push(c);
+        //     }
+        // }
+
+        
+        // println!("{}", key_path.display());
+
+        // let key = File::open(key_path)?;
+        // let mut key_reader = BufReader::new(key);
+        // let priv_key = rustls_pemfile::private_key(&mut key_reader)?;
+        // let priv_key = match priv_key {
+        //     Some(pk) => pk,
+        //     None => {
+        //         return Err(anyhow!("not found private key"));
+        //     }
+        // };
+        // let _config = ServerConfig::builder()
+        //     .with_no_client_auth()
+        //     .with_single_cert(certs, priv_key)?;
+
+        Ok(())
+    }
 }

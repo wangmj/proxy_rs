@@ -279,7 +279,7 @@ mod test {
         [outbound.tls]
         use_tls=true
         domain_name="localhost"
-        crt_path="localhost.crt"
+        crt_path=""
 "##;
         let appconfig = AppConfig::from_str(config)?;
         assert_eq!(appconfig.log.access.level, "trace");
@@ -310,7 +310,7 @@ mod test {
             tls: TlsClientConfig {
                 use_tls: true,
                 domain_name: Some("localhost".into()),
-                crt_path: Some("localhost.crt".into()),
+                crt_path: Some("".into()),
             },
         };
         assert_eq!(
