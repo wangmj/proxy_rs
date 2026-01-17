@@ -121,7 +121,9 @@ async fn wraptls(
     };
     let mut root_cert_store =
         RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if let Some(ref crt_path) = tls_config.crt_path {
+    if let Some(ref crt_path) = tls_config.crt_path
+        && !crt_path.to_string_lossy().is_empty()
+    {
         let cert = CertificateDer::from_pem_file(crt_path)?;
         root_cert_store.add(cert)?;
     }

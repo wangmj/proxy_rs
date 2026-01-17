@@ -1,5 +1,6 @@
 /target
 /examples/certs
 /log
+/config
 .DS_Store
 Cargo.lock
