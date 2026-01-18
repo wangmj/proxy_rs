@@ -1,4 +1,0 @@
-[target.x86_64-unknown-linux-gnu]
-cc = "x86_64-linux-gnu-gcc"
-cxx = "x86_64-linux-gnu-g++"
-linker = "x86_64-linux-gnu-ld"
