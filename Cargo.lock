@@ -787,7 +787,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proxy2_rs"
+name = "proxy_rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",

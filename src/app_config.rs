@@ -60,7 +60,7 @@ impl FromStr for AppConfig {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct LogConfig {
     access: AccessLogConfig,
-    error: ErrorLogConfig,
+    // error: ErrorLogConfig,
 }
 impl LogConfig {
     pub fn level(&self) -> Result<log::Level> {
@@ -287,10 +287,10 @@ mod test {
             appconfig.log.access.path,
             PathBuf::from("/var/log/rs_proxy/access.log")
         );
-        assert_eq!(
-            appconfig.log.error.path,
-            PathBuf::from("/var/log/rs_proxy/error.log")
-        );
+        // assert_eq!(
+        //     appconfig.log.error.path,
+        //     PathBuf::from("/var/log/rs_proxy/error.log")
+        // );
 
         let socks_input_config = SocksInBoundConfig {
             port: 1080,
@@ -324,7 +324,7 @@ mod test {
     fn app_config_fromstr_test2() -> Result<()> {
         let str = r##"
         [log]
-        access.level = "trace"
+        access.level = "info"
         access.path = "/var/log/rs_proxy/access.log"
         error.path = "/var/log/rx_proxy/error.log"
         [inbound]

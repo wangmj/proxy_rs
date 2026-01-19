@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use proxy2_rs::{app_config::APP_CONFIG, factory::inbound_factory::InBoundFactory};
+use proxy_rs::{app_config::APP_CONFIG, factory::inbound_factory::InBoundFactory};
 
 #[tokio::main]
 async fn main() {
