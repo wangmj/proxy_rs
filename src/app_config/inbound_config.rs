@@ -1,0 +1,98 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Deserializer};
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(untagged)] // 可选：避免枚举项的字段冲突，仅在枚举项有不同结构体字段时需要
+pub enum InBoundTypeConfig {
+    Socks5(SocksInBoundConfig),
+    Ethan(EthanInBoundConfig),
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SocksInBoundConfig {
+    port: u16,
+    uid: Option<String>,
+    pwd: Option<String>,
+}
+impl SocksInBoundConfig {
+    pub fn new(port:u16,uid:Option<String>,pwd:Option<String>)->Self{
+        Self { port, uid, pwd }
+    }
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+    pub fn uid(&self) -> Option<&str> {
+        self.uid.as_deref()
+    }
+    pub fn pwd(&self) -> Option<&str> {
+        self.pwd.as_deref()
+    }
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EthanInBoundConfig {
+    port: u16,
+    uid: String,
+    pwd: String,
+    tls: TlsServerConfig,
+}
+impl EthanInBoundConfig {
+    pub fn new(port:u16,uid:String,pwd:String,tls_config:TlsServerConfig)->Self{
+        Self { port, uid, pwd, tls: tls_config }
+    }
+    pub fn tls(&self) -> &TlsServerConfig {
+        &self.tls
+    }
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+    pub fn uid(&self) -> &str {
+        &self.uid
+    }
+    pub fn pwd(&self) -> &str {
+        &self.pwd
+    }
+}
+
+//输入的类型的中间结构体
+#[derive(Debug, serde::Deserialize)]
+struct InputBoundProtocolIntermediate {
+    protocol: String,
+    #[serde(flatten)] // 扁平化：将 TOML 中的其他字段直接解析到 config 中（避免嵌套）
+    config: toml::Value, // 先以原始 Value 存储配置，后续再反序列化为具体结构体
+}
+
+// 自定义反序列化函数：核心逻辑——根据 protocol_type 映射枚举
+pub(crate) fn deserialize_protocol<'de, D>(deserializer: D) -> Result<InBoundTypeConfig, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let intermediate = InputBoundProtocolIntermediate::deserialize(deserializer)?;
+    let protocol = intermediate.protocol.to_lowercase();
+    let config_str = toml::ser::to_string(&intermediate.config)
+        .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+    match protocol.as_str() {
+        "socks5" => {
+            let socks_input_config: SocksInBoundConfig = toml::de::from_str(&config_str)
+                .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+            Ok(InBoundTypeConfig::Socks5(socks_input_config))
+        }
+        "ethan" => {
+            let ethan_input_config: EthanInBoundConfig =
+                toml::from_str(&config_str).map_err(|e| serde::de::Error::custom(e.to_string()))?;
+            Ok(InBoundTypeConfig::Ethan(ethan_input_config))
+        }
+        _other => Err(serde::de::Error::unknown_variant(
+            _other,
+            &["socks5", "ethan"],
+        )),
+    }
+}
+#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
+pub struct TlsServerConfig {
+    pub use_tls: bool,
+    pub crt_path: Option<PathBuf>,   //公钥存放地址,
+    pub key_path: Option<PathBuf>,   //私钥存放地址
+    pub domain_name: Option<String>, //域名
+}
+
+// impl TlsServerConfig

@@ -11,7 +11,7 @@ use tokio::{
 };
 
 use crate::{
-    app_config::{APP_CONFIG, SocksInBoundConfig},
+    APP_CONFIG, SocksInBoundConfig,
     ethan::ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
     socks::socks5_proto::{

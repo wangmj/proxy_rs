@@ -1,7 +1,7 @@
 use std::{ sync::Arc};
 
 use crate::{
-    app_config::OutputBoundTypeConfig, ethan::ethan_outbound::EthanOutBound, freedom::Freedom,
+    OutputBoundTypeConfig, ethan::ethan_outbound::EthanOutBound, freedom::Freedom,
     traits::proxy_outbound::OutBoundProxy,
 };
 

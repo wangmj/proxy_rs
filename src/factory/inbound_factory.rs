@@ -1,5 +1,5 @@
 use crate::{
-    app_config::InBoundTypeConfig, ethan::ethan_inbound::EthanInBound, socks::socks5_inbound::Socks5InBound,
+    InBoundTypeConfig, ethan::ethan_inbound::EthanInBound, socks::socks5_inbound::Socks5InBound,
     traits::proxy_inbound::InBoundProxy,
 };
 

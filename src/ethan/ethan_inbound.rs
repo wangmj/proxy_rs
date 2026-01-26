@@ -11,7 +11,7 @@ use tokio_rustls::rustls::{
 };
 
 use crate::{
-    app_config::{APP_CONFIG, EthanInBoundConfig, TlsServerConfig},
+    APP_CONFIG, EthanInBoundConfig, TlsServerConfig,
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     factory::outbound_factory::OutBoundFactory,
     traits::{async_read_write::AsyncReadWrite, proxy_inbound::InBoundProxy},
