@@ -9,9 +9,7 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::
-    start_args::StartArgs
-;
+use crate::start_args::StartArgs;
 pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> AppConfig {
@@ -114,7 +112,7 @@ mod test {
         domain_name="localhost"
         crt_path=""
         [outbound.dns]
-        reslover="local"
+        resolver="local"
         server=["8.8.8.8"]
 "##;
         let appconfig = AppConfig::from_str(config)?;
@@ -143,6 +141,10 @@ mod test {
                 use_tls: true,
                 domain_name: Some("localhost".into()),
                 crt_path: Some("".into()),
+            },
+            DnsConfig {
+                resolver: DNSResolver::Local,
+                server: Some(["8.8.8.8".into()].to_vec()),
             },
         );
         assert_eq!(

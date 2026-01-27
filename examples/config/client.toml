@@ -1,0 +1,24 @@
+[log]
+access.level = "trace"
+access.path = "/var/log/rs_proxy/access.log"
+error.path = "/var/log/rs_proxy/error.log"
+
+[inbound]
+protocol = "socks5"
+port = 1080
+
+[outbound]
+protocol = "ethan"
+uid = "ethan.wang"
+pwd = "pass01!"
+port = 10800
+addr = "127.0.0.1"
+
+[outbound.tls]
+use_tls = true
+domain_name = "localhost"
+crt_path = ""
+
+[outbound.dns]
+reslover = "local"
+server = ["8.8.8.8"]
