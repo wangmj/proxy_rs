@@ -194,6 +194,7 @@ mod test {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "pem file is store only at local dev"]
     async fn load_tls_server_config_test() -> Result<()> {
         let base_path = env::current_dir()?;
         let fullchain_path = base_path.join("examples/certs/fullchain.pem");
