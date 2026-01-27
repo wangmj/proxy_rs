@@ -39,16 +39,16 @@ impl OutBoundProxy for EthanOutBound {
         &self,
         connect_request: ConnectRequest,
     ) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
-        let connector = OutBoundConnectorRequest::new(self.config.clone(), connect_request).await?;
+        let connector = EthanOutBoundConnector::new(self.config.clone(), connect_request).await?;
         connector.build_connect().await
     }
 }
-struct OutBoundConnectorRequest {
+struct EthanOutBoundConnector {
     config: Arc<EthanOutBoundConfig>,
     stream: TcpStream,
     connect_request: ConnectRequest,
 }
-impl OutBoundConnectorRequest {
+impl EthanOutBoundConnector {
     pub async fn new(
         config: Arc<EthanOutBoundConfig>,
         connect_request: ConnectRequest,
