@@ -1,9 +1,15 @@
-use std::{net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}, path::PathBuf};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::PathBuf,
+};
 
 use crate::dns_resolver::{pick_fastet_ipadd, resolve_dns};
 
-use anyhow::{Result,anyhow};
-use serde::{Deserialize, Deserializer};
+use anyhow::{Result, anyhow};
+use serde::{
+    Deserialize, Deserializer,
+    de::{self, Error, Unexpected},
+};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum OutputBoundTypeConfig {
@@ -17,10 +23,25 @@ pub struct EthanOutBoundConfig {
     uid: String,
     pwd: String,
     tls: TlsClientConfig,
+    dns: DnsConfig,
 }
 impl EthanOutBoundConfig {
-    pub fn new(addr:String,port:u16,uid:String,pwd:String,tls:TlsClientConfig)->Self{
-        Self { addr, port, uid, pwd, tls }
+    pub fn new(
+        addr: String,
+        port: u16,
+        uid: String,
+        pwd: String,
+        tls: TlsClientConfig,
+        dns: DnsConfig,
+    ) -> Self {
+        Self {
+            addr,
+            port,
+            uid,
+            pwd,
+            tls,
+            dns,
+        }
     }
     pub fn uid(&self) -> &str {
         &self.uid
@@ -46,6 +67,10 @@ impl EthanOutBoundConfig {
         }
         Ok(SocketAddr::new(ipaddr, self.port))
     }
+
+    pub fn dns(&self)->&DnsConfig{
+        &self.dns
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
@@ -57,7 +82,9 @@ struct OutBoundIntermediate {
     #[serde(flatten)]
     config: toml::Value,
 }
-pub fn deserialize_output_protocol<'de, D>(deserializer: D) -> Result<OutputBoundTypeConfig, D::Error>
+pub fn deserialize_output_protocol<'de, D>(
+    deserializer: D,
+) -> Result<OutputBoundTypeConfig, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -85,4 +112,44 @@ pub struct TlsClientConfig {
     pub use_tls: bool,
     pub domain_name: Option<String>,
     pub crt_path: Option<PathBuf>, //如果是信任的密钥，则可以忽略
+}
+#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
+pub struct DnsConfig {
+    pub resolver: DNSResolver,
+    pub server: Option<Vec<String>>,
+}
+#[derive(Debug, serde::Serialize, Clone, PartialEq)]
+pub enum DNSResolver {
+    Local,
+    Remote,
+}
+
+struct DnsResolverVisitor;
+impl<'de> de::Visitor<'de> for DnsResolverVisitor {
+    type Value = DNSResolver;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            formatter,
+            "a string representing of a dns resolver (local , remote)"
+        )
+    }
+    fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        match v.trim().to_lowercase().as_str() {
+            "local" => Ok(DNSResolver::Local),
+            "remote" => Ok(DNSResolver::Remote),
+            _ => Err(Error::invalid_type(Unexpected::Str(v), &self)),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DNSResolver{
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de> {
+        deserializer.deserialize_str(DnsResolverVisitor)
+    }
 }

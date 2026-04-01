@@ -9,9 +9,7 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::
-    start_args::StartArgs
-;
+use crate::start_args::StartArgs;
 pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> AppConfig {
@@ -96,7 +94,7 @@ mod test {
         let config = r##"
         [log]
         access.level = "trace"
-        access.path = "/var/log/rs_proxy/access.log"
+        access.path = "log/access.log"
         error.path = "/var/log/rs_proxy/error.log"
 
         [inbound]
@@ -109,19 +107,22 @@ mod test {
         pwd = "pass01!"
         port = 10800
         addr = "127.0.0.1"
+
         [outbound.tls]
-        use_tls=true
-        domain_name="localhost"
-        crt_path=""
+        use_tls = true
+        domain_name = "dev.ubuntu"
+        crt_path = "~/DevSpace/certs/dev.ubuntu.crt"
+
         [outbound.dns]
-        reslover="local"
-        server=["8.8.8.8"]
+        resolver = "local"
+        server = ["8.8.8.8"]
+
 "##;
         let appconfig = AppConfig::from_str(config)?;
         assert_eq!(appconfig.log.access.level, "trace");
         assert_eq!(
             appconfig.log.access.path,
-            PathBuf::from("/var/log/rs_proxy/access.log")
+            PathBuf::from("log/access.log")
         );
         // assert_eq!(
         //     appconfig.log.error.path,
@@ -141,8 +142,12 @@ mod test {
             "pass01!".into(),
             TlsClientConfig {
                 use_tls: true,
-                domain_name: Some("localhost".into()),
-                crt_path: Some("".into()),
+                domain_name: Some("dev.ubuntu".into()),
+                crt_path: Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
+            },
+            DnsConfig {
+                resolver: DNSResolver::Local,
+                server: Some(["8.8.8.8".into()].to_vec()),
             },
         );
         assert_eq!(
