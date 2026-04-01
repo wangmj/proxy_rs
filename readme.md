@@ -1,118 +1,308 @@
-# 重复造轮子之--Socks5 代理
+# proxy_rs 项目说明
 
-目前已经实现了socks5代理的功能，能够实现客户端和服务端tls加密后进行转发，防止被检测发现。且该代理为透明代理，即不解析客户端发的内容，也不需要客户端信任服务端证书。
+一个使用 Rust 实现的轻量代理程序。
 
-后续再研究http代理协议，并视情况实现。
+项目通过不同的 Inbound 和 Outbound 组合，实现以下两类典型部署：
 
-写本项目的初衷是之前使用v2ray时，总时不时被封，后来发现协议过于简单导致很容易被定位检测到，又因为自己刚学了Rust，所以就想着用Rust实现一个代理，在客户端和服务端之间使用TLS加密传输，这样就不容易被检测了。后来在编写后才发现有Trojan，但因为没有深入研究Trojan，不知道跟Trojan有多少差别。
+1. 客户端模式：Socks5 入站 + Ethan 出站
+2. 服务端模式：Ethan 入站 + Freedom 出站
 
-## 目的
+其中 Ethan 是项目内自定义的传输协议，可选 TLS 封装；Freedom 表示直连目标地址。
 
-学习Socks5代理
-学习Rust语言
+## 1. 项目目标与能力
 
-## Features
+### 1.1 核心目标
 
-透明代理，代理服务端不解析传输的数据（http协议不解析，https协议到服务端时是双重加密的）
-TLS加密传输
-不需要客户端信任代理的tls证书
+1. 在客户端接收 Socks5 请求。
+2. 将需要代理的请求通过 Ethan over TCP/TLS 转发到服务端。
+3. 在服务端转发到真实目标，并将数据回传给客户端。
+4. 支持按规则分流：命中规则走远端代理，不命中本地直连。
 
-## 编译
+### 1.2 当前功能
 
-需要具备Rust环境，[安装Rust链接](https://rustup.rs)
-步骤：
+1. Socks5 入站（Connect）。
+2. Ethan 入站/出站（带简单鉴权 uid/pwd）。
+3. Freedom 出站（直接连接目标）。
+4. 可选 TLS（客户端到服务端链路）。
+5. 日志输出到 stdout 和文件。
+6. 路由规则分流（domain/ip，正则匹配）。
 
-1. 将项目拷贝到本地
-2. 在源码目录内执行： cargo build --release
-3. 最终执行文件： target/release/proxy_rs
+## 2. 架构说明
 
-### 客户端配置示例
+### 2.1 组件
+
+1. Inbound
+- socks5：监听本地端口，接受应用代理请求。
+- ethan：监听服务端端口，接受客户端 Ethan 请求。
+
+2. Outbound
+- ethan：连接远端 Ethan 服务。
+- freedom：直接连接目标地址。
+
+3. 工厂
+- InBoundFactory：根据配置生成 socks5 或 ethan 入站。
+- OutBoundFactory：根据配置生成 ethan 或 freedom 出站。
+
+4. 配置
+- 启动时读取 TOML/JSON 配置并构建 APP_CONFIG。
+- 支持 route 规则进行出站分流。
+
+### 2.2 典型链路
+
+客户端模式（建议）：
+应用 -> Socks5 Inbound -> 规则匹配 ->
+1) 命中：Ethan Outbound -> 服务端 Ethan Inbound -> Freedom Outbound -> 目标站
+2) 不命中：Freedom Outbound -> 目标站
+
+## 3. 构建与运行
+
+## 3.1 环境要求
+
+1. Rust stable（推荐通过 rustup 安装）。
+2. macOS/Linux/Windows 均可，示例路径按 macOS/Linux 给出。
+
+### 3.2 编译
+
+在项目根目录执行：
+
+```bash
+cargo build --release
+```
+
+可执行文件：
+
+```text
+target/release/proxy_rs
+```
+
+### 3.3 启动参数
+
+```text
+-c, --config <FILE>
+```
+
+指定配置文件路径。支持 `.toml` 和 `.json`。若不指定，默认读取当前目录下 `config.toml`。
+
+## 4. 配置说明
+
+配置文件支持 TOML 和 JSON，顶层主要包含：
+
+1. log
+2. inbound
+3. outbound
+4. route（可选）
+
+### 4.1 日志配置
 
 ```toml
 [log]
 access.level = "info"
 access.path = "log/access.log"
+```
 
-[inbound] #传入的配置
+说明：
+
+1. access.level 支持 trace/debug/info/warn/error。
+2. access.path 文件不存在时会自动创建目录和文件。
+
+### 4.2 客户端配置示例（Socks5 + Ethan）
+
+```toml
+[log]
+access.level = "trace"
+access.path = "log/access.log"
+
+[inbound]
 protocol = "socks5"
 port = 1080
 
 [outbound]
-protocol = "ethan" #目前只支持ethan（自定义命名）和freedom
-uid = "ethan" #与服务端的代理连接时会验证用户和密码，需要与服务端配置一致
+protocol = "ethan"
+uid = "ethan.wang"
 pwd = "pass01!"
-port = 10800   #服务端代理的端口
-addr = "127.0.0.1"# 服务端代理的地址，可以是ip地址，也可以是服务端的域名。
+port = 10800
+addr = "dev.ubuntu"
 
 [outbound.tls]
-use_tls=true #是否使用tls
-domain_name="localhost" #服务端域名，如果使用tls时，该地址必填
-crt_path=""# 客户端会加载系统所有信任的证书，并加载此证书，对服务端的证书进行校验
+use_tls = true
+domain_name = "dev.ubuntu"
+crt_path = "/Users/you/certs/dev.ubuntu.crt"
 
 [outbound.dns]
-resolver = "local" # local: 本地解析域名后再连服务端代理；remote: 保留域名由服务端解析
+resolver = "local"
 server = ["8.8.8.8"]
 
 [route]
-# 规则使用正则表达式，命中后走服务端代理(outbound = ethan)，不命中则本地 freedom 直连
-# 建议使用 ^ 和 $ 做边界限制，避免误匹配
+# 命中正则规则 -> 走远端 Ethan
+# 未命中 -> 本地 Freedom 直连
 domain = ["(^|\\.)google\\.com$", "^github\\.com$"]
 ip = ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$", "^2001:db8:.*"]
 ```
 
-#### route 规则说明
-
-1. `route.domain`：对目标域名做正则匹配（代码中会先转小写再匹配）。
-2. `route.ip`：对目标 IP 字符串做正则匹配（IPv4/IPv6 都支持）。
-3. 只要 `domain` 或 `ip` 任意一条规则命中，就走服务端代理。
-4. 如果 `route` 为空或未配置，保持旧行为：全部请求走 `outbound`。
-5. 正则写错时，该条规则会被忽略并记录 warn 日志。
-
-### 服务端配置示例
+### 4.3 服务端配置示例（Ethan + Freedom）
 
 ```toml
 [log]
 access.level = "info"
-access.path = "log/access.log"
+access.path = "log/server_access.log"
 
-[inbound] #传入配置
-protocol = "ethan" # 传入的协议，需要与客户端报纸一致
-port = 10800 
-uid = "uid"
-pwd = "pwd"
+[inbound]
+protocol = "ethan"
+port = 10800
+uid = "ethan.wang"
+pwd = "pass01!"
 
 [inbound.tls]
 use_tls = true
-crt_path = "localhost.crt" 
-key_path = "localhost.key"
+crt_path = "examples/certs/fullchain.pem"
+key_path = "examples/certs/privkey.pem"
 domain_name = "localhost"
 
-[outbound] #传出的协议，freedom表示会转发到目标服务器。
+[outbound]
 protocol = "freedom"
 ```
 
-### 运行
+### 4.4 客户端 JSON 配置示例（Socks5 + Ethan）
 
-该代理本身并不区分客户端和代理端，只是根据配置文件构建 InBound和OutBound，因此只需要将设置好配置文件，然后启动就可以实现相应的功能。
-
-#### 客户端
-
-```shell
- proxy_rs -c client.toml
+```json
+{
+  "log": {
+    "access": {
+      "level": "trace",
+      "path": "log/access.log"
+    }
+  },
+  "inbound": {
+    "protocol": "socks5",
+    "port": 1080
+  },
+  "outbound": {
+    "protocol": "ethan",
+    "uid": "ethan.wang",
+    "pwd": "pass01!",
+    "port": 10800,
+    "addr": "dev.ubuntu",
+    "tls": {
+      "use_tls": true,
+      "domain_name": "dev.ubuntu"
+    },
+    "dns": {
+      "resolver": "local",
+      "server": ["8.8.8.8"]
+    }
+  },
+  "route": {
+    "domain": ["(^|\\.)google\\.com$", "^github\\.com$"],
+    "ip": ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$", "^2001:db8:.*"]
+  }
+}
 ```
 
-#### 服务端
+## 5. route 分流规则
 
-```shell
-proxy_rs -c server.toml
+### 5.1 规则语义
+
+1. route.domain：对目标域名进行正则匹配（内部会先转小写后匹配）。
+2. route.ip：对目标 IP 字符串进行正则匹配（IPv4/IPv6 都支持）。
+3. domain 或 ip 任意一条命中即判定命中规则。
+4. route 未配置或为空时，保持兼容行为：全部请求走 outbound。
+5. 非法正则会被忽略，并记录 warn 日志。
+
+### 5.2 正则建议
+
+1. 建议使用 ^ 和 $ 限定边界，避免误匹配。
+2. 域名点号请转义为 \\.
+3. 匹配子域可用 (^|\\.)example\\.com$
+
+## 6. DNS 解析策略
+
+Ethan 出站支持两种策略：
+
+1. local
+- 客户端先将域名解析为 IP，再发送给服务端。
+
+2. remote
+- 客户端保留域名，服务端侧再解析。
+
+该选项位于 outbound.dns.resolver。
+
+## 7. 运行方式
+
+### 7.1 使用toml配置启动服务端
+
+客户端
+
+```bash
+./target/release/proxy_rs -c examples/config/server.toml
 ```
 
-## 进度
+服务端
 
-1. 完成socks5服务端 ✅
-2. 完成socks5<->freedom的转发 ✅
-3. 完成socks5<->自定义协议output<->自定义协议input<->freedom的转发 ✅
-4. 自定义协议加密.✅
-5. 将配置提取到文件.✅
-6. socks5协议已在服务器端验证，功能已完成。✅
-7. 指定域名在客户端还是服务端解析 
+```bash
+./target/release/proxy_rs -c examples/config/client.toml
+```
+
+### 7.2 使用 JSON 配置启动
+
+服务端：
+
+```bash
+./target/release/proxy_rs -c examples/config/server.json
+```
+
+客户端：
+
+```bash
+./target/release/proxy_rs -c examples/config/client.json
+```
+
+### 7.4 业务程序接入
+
+将浏览器或系统代理指向客户端 Socks5 监听地址，例如：
+
+```text
+127.0.0.1:1080
+```
+
+## 8. 已知限制
+
+1. Socks5 当前主要实现 Connect 流程，Bind/Udp 仍为待实现。
+2. Socks5 认证当前优先 NoAuth，其他认证方式未完成。
+3. Ethan 协议为项目内协议，需客户端和服务端版本匹配。
+
+## 9. 开发与测试
+
+### 9.1 运行测试
+
+```bash
+cargo test
+```
+
+### 9.2 常用开发命令
+
+```bash
+cargo fmt
+cargo clippy --all-targets --all-features
+cargo test
+```
+
+## 10. 目录参考
+
+```text
+src/
+  app_config/          # 配置模型与反序列化
+  factory/             # Inbound/Outbound 工厂
+  socks/               # Socks5 协议与入站实现
+  ethan/               # Ethan 协议与入/出站
+  freedom.rs           # 直连出站
+  dns_resolver.rs      # DNS 解析工具
+  main.rs              # 程序入口
+examples/config/
+  client.toml
+  server.toml
+examples/certs/
+  fullchain.pem
+  privkey.pem
+```
+
+---
