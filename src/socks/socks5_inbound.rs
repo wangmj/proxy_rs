@@ -11,7 +11,7 @@ use tokio::{
 };
 
 use crate::{
-    APP_CONFIG, SocksInBoundConfig,
+    APP_CONFIG, FreedomOutputConfig, OutputBoundTypeConfig, SocksInBoundConfig,
     ethan::ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
     socks::socks5_proto::{
@@ -195,8 +195,15 @@ async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
 
     match cmd {
         Cmd::Connect => {
-            let outbound = OutBoundFactory::get(APP_CONFIG.outbound());
             let connect_request = ConnectRequest::try_from((atyp, address.as_slice(), port))?;
+            let outbound_config = if APP_CONFIG.should_forward_to_remote(&connect_request) {
+                APP_CONFIG.outbound()
+            } else {
+                log::trace!("route not matched, fallback to local freedom outbound");
+                &OutputBoundTypeConfig::Freedom(FreedomOutputConfig)
+            };
+
+            let outbound = OutBoundFactory::get(outbound_config);
             let mut outbound_stream = outbound.connect_server(connect_request).await?;
             response_builder.rep(SocksResponseType::Success);
             let response = response_builder.build();

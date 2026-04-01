@@ -2,14 +2,16 @@ use super::inbound_config::*;
 use super::outbound_config::*;
 use anyhow::Result;
 use clap::Parser;
+use regex::Regex;
 use std::{
     env,
+    net::IpAddr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::LazyLock,
 };
 
-use crate::start_args::StartArgs;
+use crate::{ethan::ethan_proto::{ConnectRequest, DstType}, start_args::StartArgs};
 pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> AppConfig {
@@ -21,8 +23,10 @@ fn get_app_config_from_args() -> AppConfig {
             current_dir.join("config.toml")
         }
     };
-    let config_content = std::fs::read_to_string(config_path).expect("read config content failed!");
-    AppConfig::from_str(&config_content).expect("config format is incorrect.")
+    let config_content =
+        std::fs::read_to_string(&config_path).expect("read config content failed!");
+    AppConfig::parse_with_file_type(&config_content, &config_path)
+        .expect("config format is incorrect.")
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -32,6 +36,8 @@ pub struct AppConfig {
     inbound: InBoundTypeConfig,
     #[serde(deserialize_with = "deserialize_output_protocol")]
     outbound: OutputBoundTypeConfig,
+    #[serde(default)]
+    route: RouteConfig,
 }
 impl AppConfig {
     pub fn inbound(&self) -> &InBoundTypeConfig {
@@ -43,6 +49,71 @@ impl AppConfig {
     pub fn log(&self) -> &LogConfig {
         &self.log
     }
+
+    pub fn route(&self) -> &RouteConfig {
+        &self.route
+    }
+
+    pub(crate) fn should_forward_to_remote(&self, connect_request: &ConnectRequest) -> bool {
+        // Keep backward compatibility: if no route rules are configured,
+        // all requests still use the configured outbound.
+        if self.route.is_empty() {
+            return true;
+        }
+
+        match connect_request.dst_type() {
+            DstType::DomainName(domain) => self.route.matches_domain(domain),
+            DstType::Ipv4(ipv4) => self.route.matches_ip(IpAddr::V4(*ipv4)),
+            DstType::Ipv6(ipv6) => self.route.matches_ip(IpAddr::V6(*ipv6)),
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+pub struct RouteConfig {
+    #[serde(default)]
+    domain: Vec<String>,
+    #[serde(default)]
+    ip: Vec<String>,
+}
+
+impl RouteConfig {
+    pub fn is_empty(&self) -> bool {
+        self.domain.is_empty() && self.ip.is_empty()
+    }
+
+    fn matches_domain(&self, domain: &str) -> bool {
+        let target = normalize_domain(domain);
+        self.domain
+            .iter()
+            .any(|rule| match_regex_rule(&target, rule, "route.domain"))
+    }
+
+    fn matches_ip(&self, ip: IpAddr) -> bool {
+        let target = ip.to_string();
+        self.ip
+            .iter()
+            .any(|rule| match_regex_rule(&target, rule, "route.ip"))
+    }
+}
+
+fn normalize_domain(val: &str) -> String {
+    val.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn match_regex_rule(target: &str, rule: &str, rule_group: &str) -> bool {
+    let trimmed = rule.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    match Regex::new(trimmed) {
+        Ok(regex) => regex.is_match(target),
+        Err(err) => {
+            log::warn!("invalid {} regex ignored: {}, error: {}", rule_group, trimmed, err);
+            false
+        }
+    }
 }
 
 impl FromStr for AppConfig {
@@ -51,6 +122,50 @@ impl FromStr for AppConfig {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let f: AppConfig = toml::from_str(s)?;
         Ok(f)
+    }
+}
+
+impl AppConfig {
+    fn parse_with_file_type(content: &str, config_path: &Path) -> Result<Self> {
+        let ext = config_path
+            .extension()
+            .and_then(|x| x.to_str())
+            .map(|x| x.to_ascii_lowercase());
+
+        match ext.as_deref() {
+            Some("json") => parse_json_or_toml(content),
+            Some("toml") => parse_toml_or_json(content),
+            // Backward-compatible fallback for files with custom/no extension.
+            _ => parse_toml_or_json(content),
+        }
+    }
+}
+
+fn parse_toml_or_json(content: &str) -> Result<AppConfig> {
+    match toml::from_str::<AppConfig>(content) {
+        Ok(cfg) => Ok(cfg),
+        Err(toml_err) => match serde_json::from_str::<AppConfig>(content) {
+            Ok(cfg) => Ok(cfg),
+            Err(json_err) => Err(anyhow::anyhow!(
+                "failed to parse config as TOML or JSON; toml_err: {}; json_err: {}",
+                toml_err,
+                json_err
+            )),
+        },
+    }
+}
+
+fn parse_json_or_toml(content: &str) -> Result<AppConfig> {
+    match serde_json::from_str::<AppConfig>(content) {
+        Ok(cfg) => Ok(cfg),
+        Err(json_err) => match toml::from_str::<AppConfig>(content) {
+            Ok(cfg) => Ok(cfg),
+            Err(toml_err) => Err(anyhow::anyhow!(
+                "failed to parse config as JSON or TOML; json_err: {}; toml_err: {}",
+                json_err,
+                toml_err
+            )),
+        },
     }
 }
 
@@ -117,6 +232,10 @@ mod test {
         resolver = "local"
         server = ["8.8.8.8"]
 
+        [route]
+        domain = ["(^|\\.)google\\.com$", "^github\\.com$"]
+        ip = ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$"]
+
 "##;
         let appconfig = AppConfig::from_str(config)?;
         assert_eq!(appconfig.log.access.level, "trace");
@@ -154,6 +273,8 @@ mod test {
             appconfig.outbound,
             OutputBoundTypeConfig::Ethan(ethan_output_config)
         );
+        assert!(appconfig.route.matches_domain("www.google.com"));
+        assert!(appconfig.route.matches_ip("8.8.8.8".parse()?));
         Ok(())
     }
 
@@ -198,4 +319,93 @@ mod test {
         );
         Ok(())
     }
+
+    #[test]
+    fn route_match_test() -> Result<()> {
+        let str = r##"
+        [log]
+        access.level = "info"
+        access.path = "/tmp/access.log"
+
+        [inbound]
+        protocol = "socks5"
+        port = 1080
+
+        [outbound]
+        protocol = "ethan"
+        uid = "u"
+        pwd = "p"
+        port = 10800
+        addr = "127.0.0.1"
+
+        [outbound.tls]
+        use_tls = false
+
+        [outbound.dns]
+        resolver = "local"
+
+        [route]
+        domain = ["(^|\\.)example\\.com$", "^api\\.test\\.com$"]
+        ip = ["^10\\..*", "^2001:db8:.*", "^127\\.0\\.0\\.1$"]
+        "##;
+
+        let appconfig = AppConfig::from_str(str)?;
+
+        let req1 = ConnectRequest::new(443, DstType::DomainName("www.example.com".into()));
+        assert!(appconfig.should_forward_to_remote(&req1));
+
+        let req2 = ConnectRequest::new(443, DstType::DomainName("no-match.com".into()));
+        assert!(!appconfig.should_forward_to_remote(&req2));
+
+        let req3 = ConnectRequest::new(80, DstType::Ipv4("10.2.3.4".parse()?));
+        assert!(appconfig.should_forward_to_remote(&req3));
+
+        let req4 = ConnectRequest::new(80, DstType::Ipv4("11.2.3.4".parse()?));
+        assert!(!appconfig.should_forward_to_remote(&req4));
+
+        Ok(())
+    }
+
+        #[test]
+        fn app_config_from_json_test() -> Result<()> {
+                let json = r##"
+                {
+                    "log": {
+                        "access": {
+                            "level": "info",
+                            "path": "log/access.log"
+                        }
+                    },
+                    "inbound": {
+                        "protocol": "socks5",
+                        "port": 1080
+                    },
+                    "outbound": {
+                        "protocol": "ethan",
+                        "uid": "ethan.wang",
+                        "pwd": "pass01!",
+                        "port": 10800,
+                        "addr": "127.0.0.1",
+                        "tls": {
+                            "use_tls": false
+                        },
+                        "dns": {
+                            "resolver": "local",
+                            "server": ["8.8.8.8"]
+                        }
+                    },
+                    "route": {
+                        "domain": ["(^|\\.)example\\.com$"],
+                        "ip": ["^10\\..*"]
+                    }
+                }
+                "##;
+
+                let appconfig = parse_json_or_toml(json)?;
+                let req_domain = ConnectRequest::new(443, DstType::DomainName("www.example.com".into()));
+                let req_ip = ConnectRequest::new(80, DstType::Ipv4("10.1.2.3".parse()?));
+                assert!(appconfig.should_forward_to_remote(&req_domain));
+                assert!(appconfig.should_forward_to_remote(&req_ip));
+                Ok(())
+        }
 }
