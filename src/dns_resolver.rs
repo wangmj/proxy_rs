@@ -3,8 +3,9 @@ use hickory_resolver::Resolver;
 use std::net::IpAddr;
 use tokio::net::TcpStream;
 
-pub async fn resolve_dns(domain_name: &str) -> Result<Vec<IpAddr>> {
-    if !is_valid_domain(domain_name) {
+pub async fn resolve_dns(domain_name: impl AsRef<str>) -> Result<Vec<IpAddr>> {
+    let domain_name=domain_name.as_ref();
+    if !is_valid_domain(domain_name.as_ref()) {
         return Err(anyhow!("Unvalid domain name"));
     }
     let resolver = Resolver::builder_tokio()?.build();

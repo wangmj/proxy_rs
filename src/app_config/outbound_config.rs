@@ -6,42 +6,54 @@ use std::{
 use crate::dns_resolver::{pick_fastet_ipadd, resolve_dns};
 
 use anyhow::{Result, anyhow};
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, Error, Unexpected},
-};
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
-pub enum OutputBoundTypeConfig {
+use serde::Deserialize;
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum OutBoundTypeConfig {
     Ethan(EthanOutBoundConfig),
     Freedom(FreedomOutputConfig),
 }
+
+impl OutBoundTypeConfig {
+    pub fn eq_name_ignore_case(&self, name: impl AsRef<str>) -> bool {
+        match self {
+            OutBoundTypeConfig::Ethan(ethan_out_bound_config) => ethan_out_bound_config
+                .name
+                .eq_ignore_ascii_case(name.as_ref()),
+            OutBoundTypeConfig::Freedom(freedom_output_config) => freedom_output_config
+                .name
+                .eq_ignore_ascii_case(name.as_ref()),
+        }
+    }
+}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct EthanOutBoundConfig {
+    name: String,
     addr: String,
     port: u16,
     uid: String,
     pwd: String,
     tls: TlsClientConfig,
-    dns: DnsConfig,
 }
 impl EthanOutBoundConfig {
     pub fn new(
+        name: String,
         addr: String,
         port: u16,
         uid: String,
         pwd: String,
         tls: TlsClientConfig,
-        dns: DnsConfig,
     ) -> Self {
         Self {
+            name,
             addr,
             port,
             uid,
             pwd,
             tls,
-            dns,
         }
+    }
+    pub fn name(&self)->&str{
+        &self.name
     }
     pub fn uid(&self) -> &str {
         &self.uid
@@ -67,43 +79,15 @@ impl EthanOutBoundConfig {
         }
         Ok(SocketAddr::new(ipaddr, self.port))
     }
-
-    pub fn dns(&self)->&DnsConfig{
-        &self.dns
-    }
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
-pub struct FreedomOutputConfig;
-
-#[derive(Debug, serde::Deserialize)]
-struct OutBoundIntermediate {
-    protocol: String,
-    #[serde(flatten)]
-    config: toml::Value,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct FreedomOutputConfig {
+    name: String,
 }
-pub fn deserialize_output_protocol<'de, D>(
-    deserializer: D,
-) -> Result<OutputBoundTypeConfig, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let intermediate = OutBoundIntermediate::deserialize(deserializer)?;
-    let protocol = intermediate.protocol.to_lowercase();
-    let config_str = toml::ser::to_string(&intermediate.config)
-        .map_err(|e| serde::de::Error::custom(e.to_string()))?;
-
-    match protocol.as_str() {
-        "ethan" => {
-            let ethan: EthanOutBoundConfig =
-                toml::from_str(&config_str).map_err(|e| serde::de::Error::custom(e.to_string()))?;
-            Ok(OutputBoundTypeConfig::Ethan(ethan))
-        }
-        "freedom" => Ok(OutputBoundTypeConfig::Freedom(FreedomOutputConfig)),
-        _other => Err(serde::de::Error::unknown_variant(
-            _other,
-            &["ethan", "freedom"],
-        )),
+impl FreedomOutputConfig {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
     }
 }
 
@@ -112,44 +96,4 @@ pub struct TlsClientConfig {
     pub use_tls: bool,
     pub domain_name: Option<String>,
     pub crt_path: Option<PathBuf>, //如果是信任的密钥，则可以忽略
-}
-#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
-pub struct DnsConfig {
-    pub resolver: DNSResolver,
-    pub server: Option<Vec<String>>,
-}
-#[derive(Debug, serde::Serialize, Clone, PartialEq)]
-pub enum DNSResolver {
-    Local,
-    Remote,
-}
-
-struct DnsResolverVisitor;
-impl<'de> de::Visitor<'de> for DnsResolverVisitor {
-    type Value = DNSResolver;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            formatter,
-            "a string representing of a dns resolver (local , remote)"
-        )
-    }
-    fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        match v.trim().to_lowercase().as_str() {
-            "local" => Ok(DNSResolver::Local),
-            "remote" => Ok(DNSResolver::Remote),
-            _ => Err(Error::invalid_type(Unexpected::Str(v), &self)),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for DNSResolver{
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de> {
-        deserializer.deserialize_str(DnsResolverVisitor)
-    }
 }

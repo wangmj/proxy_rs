@@ -1,4 +1,11 @@
-use std::{fs::File, io::BufReader, net::SocketAddr, path::Path, sync::Arc};
+use std::{
+    env,
+    fs::File,
+    io::BufReader,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -32,7 +39,7 @@ impl InBoundProxy for EthanInBound {
         let listener = TcpListener::bind(("0.0.0.0", port))
             .await
             .expect("failed to start listen");
-        log::trace!("ethan server start listening at port: {}", port);
+        log::info!("ethan server start listening at port: {}", port);
         while let Ok((stream, addr)) = listener.accept().await {
             let config = self.config.clone();
             //todo: 此处没有将正在处理的线程保存，所以在停止时可能会导致正在处理的数据丢失。
@@ -57,7 +64,7 @@ impl EthanInBoundConnector {
     }
 
     async fn handlstream(mut self) {
-        log::trace!("ethan server rev connect, remote :{:?}", self.remote_addr);
+        log::info!("ethan server rev connect, remote :{:?}", self.remote_addr);
         let config = self.config.clone();
         tokio::spawn(async move {
             if self.auth_handle().await.is_err() {
@@ -117,8 +124,12 @@ impl EthanInBoundConnector {
         let mut buff = vec![0u8; lens];
         self.stream.read_exact(&mut buff).await?;
         let request = ConnectRequest::try_from(buff.as_slice())?;
+        log::info!("received connect server: {:?}", request);
 
-        let output_bound = OutBoundFactory::get(APP_CONFIG.outbound());
+        let output_config = APP_CONFIG
+            .get_forward_to_remote(&request)
+            .expect("未找到匹配的路由");
+        let output_bound = OutBoundFactory::get(&output_config);
         match output_bound.connect_server(request).await {
             Ok(out_stream) => {
                 let response = EthanResponse::new(true, None);
@@ -137,9 +148,7 @@ impl EthanInBoundConnector {
         }
     }
 
-    async fn wraptls(
-        self, 
-    ) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
+    async fn wraptls(self) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
         log::trace!("server start wrap tls!");
         let tls_config = self.config.tls();
         if tls_config.crt_path.is_none()
@@ -151,11 +160,27 @@ impl EthanInBoundConnector {
             ));
         }
         let key_path = match tls_config.key_path {
-            Some(ref k) => k.clone(),
+            Some(ref k) => {
+                let expanded = expand_path(k);
+                log::trace!("key path:{}", expanded.display());
+                if expanded.exists() {
+                    expanded
+                } else {
+                    return Err(anyhow!("key path not found: {}", expanded.display()));
+                }
+            }
             None => return Err(anyhow!("key path can't null")),
         };
         let crt_path = match tls_config.crt_path {
-            Some(ref k) => k.clone(),
+            Some(ref k) => {
+                let expanded = expand_path(k);
+                log::trace!("crt path:{}", expanded.display());
+                if expanded.exists() {
+                    expanded
+                } else {
+                    return Err(anyhow!("crt path not found: {}", expanded.display()));
+                }
+            }
             None => return Err(anyhow!("crt path can't null")),
         };
         let _domain_name = match tls_config.domain_name {
@@ -169,6 +194,24 @@ impl EthanInBoundConnector {
         log::trace!("server  wrap stream with tls success!");
         Ok(Box::new(accept))
     }
+}
+
+fn expand_path(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    if raw == "~" || raw.starts_with("~/") {
+        if let Some(home) = env::var_os("HOME") {
+            let mut expanded = PathBuf::from(home);
+            if raw.len() > 2 {
+                expanded.push(&raw[2..]);
+            }
+            return expanded;
+        }
+    } else if raw.starts_with("./") {
+        let mut currentdir = env::current_dir().expect("get current dir failed!");
+        currentdir.push(&raw[2..]);
+        return currentdir;
+    }
+    path.to_path_buf()
 }
 
 async fn get_tsl_server_config(crt_path: &Path, key_path: &Path) -> Result<ServerConfig> {
@@ -209,5 +252,12 @@ mod test {
 
         let _config = get_tsl_server_config(&fullchain_path, &key_path).await?;
         Ok(())
+    }
+
+    #[test]
+    fn expand_path_test() {
+        let final_path = expand_path(Path::new("./file.json"));
+        assert!(final_path.display().to_string().chars().count()>"/file.json".chars().count());
+        println!("{}",final_path.display());
     }
 }

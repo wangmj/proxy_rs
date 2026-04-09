@@ -15,12 +15,22 @@
     "pwd": "pass01!",
     "tls": {
       "use_tls": true,
-      "crt_path": "localhost.crt",
-      "key_path": "localhost.key",
-      "domain_name": "localhost"
+      "crt_path": "./server.dev.ubuntu.crt",
+      "key_path": "./server.dev.ubuntu.key",
+      "domain_name": "dev.ubuntu"
     }
   },
-  "outbound": {
-    "protocol": "freedom"
-  }
+  "outbound": [
+    {
+      "protocol": "freedom",
+      "name": "freedom"
+    }
+  ],
+  "routes": [
+    {
+      "proxy_name": "freedom",
+      "rule": "*",
+      "rule_type":"rule_type"
+    }
+  ]
 }

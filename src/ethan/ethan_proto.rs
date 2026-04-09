@@ -71,6 +71,15 @@ impl DstType {
     }
 }
 
+impl ToString for DstType {
+    fn to_string(&self) -> String {
+        match self {
+            DstType::Ipv4(ipv4_addr) => ipv4_addr.to_string(),
+            DstType::Ipv6(ipv6_addr) => ipv6_addr.to_string(),
+            DstType::DomainName(d) => d.to_string(),
+        }
+    }
+}
 impl ConnectRequest {
     pub fn new(port: u16, t: DstType) -> Self {
         Self {
@@ -91,6 +100,9 @@ impl ConnectRequest {
     }
     pub fn port(&self) -> u16 {
         self.dst_port
+    }
+    pub fn set_dst_type(&mut self, dst: DstType) {
+        self.dst_type = dst;
     }
 }
 impl TryFrom<&[u8]> for ConnectRequest {

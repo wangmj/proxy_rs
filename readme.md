@@ -278,13 +278,6 @@ Ethan 出站支持两种策略：
 cargo test
 ```
 
-### 9.2 常用开发命令
-
-```bash
-cargo fmt
-cargo clippy --all-targets --all-features
-cargo test
-```
 
 ## 10. 目录参考
 
@@ -300,9 +293,4 @@ src/
 examples/config/
   client.toml
   server.toml
-examples/certs/
-  fullchain.pem
-  privkey.pem
 ```
-
----

@@ -1,17 +1,17 @@
 use super::inbound_config::*;
 use super::outbound_config::*;
 use anyhow::Result;
+use anyhow::anyhow;
 use clap::Parser;
-use regex::Regex;
-use std::{
-    env,
-    net::IpAddr,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::LazyLock,
-};
+use serde::{Deserialize, Deserializer};
+use std::{env, net::IpAddr, path::Path, sync::LazyLock};
 
-use crate::{ethan::ethan_proto::{ConnectRequest, DstType}, start_args::StartArgs};
+use crate::log_config::LogConfig;
+use crate::route_config::RouteConfig;
+use crate::{
+    ethan::ethan_proto::{ConnectRequest, DstType},
+    start_args::StartArgs,
+};
 pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> AppConfig {
@@ -34,295 +34,129 @@ pub struct AppConfig {
     log: LogConfig,
     #[serde(deserialize_with = "deserialize_protocol")]
     inbound: InBoundTypeConfig,
-    #[serde(deserialize_with = "deserialize_output_protocol")]
-    outbound: OutputBoundTypeConfig,
+    #[serde(deserialize_with = "deserialize_outbounds")]
+    outbounds: Vec<OutBoundTypeConfig>,
     #[serde(default)]
-    route: RouteConfig,
+    routes: Vec<RouteConfig>,
 }
 impl AppConfig {
-    pub fn inbound(&self) -> &InBoundTypeConfig {
-        &self.inbound
-    }
-    pub fn outbound(&self) -> &OutputBoundTypeConfig {
-        &self.outbound
-    }
-    pub fn log(&self) -> &LogConfig {
-        &self.log
-    }
-
-    pub fn route(&self) -> &RouteConfig {
-        &self.route
-    }
-
-    pub(crate) fn should_forward_to_remote(&self, connect_request: &ConnectRequest) -> bool {
-        // Keep backward compatibility: if no route rules are configured,
-        // all requests still use the configured outbound.
-        if self.route.is_empty() {
-            return true;
-        }
-
-        match connect_request.dst_type() {
-            DstType::DomainName(domain) => self.route.matches_domain(domain),
-            DstType::Ipv4(ipv4) => self.route.matches_ip(IpAddr::V4(*ipv4)),
-            DstType::Ipv6(ipv6) => self.route.matches_ip(IpAddr::V6(*ipv6)),
-        }
-    }
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
-pub struct RouteConfig {
-    #[serde(default)]
-    domain: Vec<String>,
-    #[serde(default)]
-    ip: Vec<String>,
-}
-
-impl RouteConfig {
-    pub fn is_empty(&self) -> bool {
-        self.domain.is_empty() && self.ip.is_empty()
-    }
-
-    fn matches_domain(&self, domain: &str) -> bool {
-        let target = normalize_domain(domain);
-        self.domain
-            .iter()
-            .any(|rule| match_regex_rule(&target, rule, "route.domain"))
-    }
-
-    fn matches_ip(&self, ip: IpAddr) -> bool {
-        let target = ip.to_string();
-        self.ip
-            .iter()
-            .any(|rule| match_regex_rule(&target, rule, "route.ip"))
-    }
-}
-
-fn normalize_domain(val: &str) -> String {
-    val.trim().trim_end_matches('.').to_ascii_lowercase()
-}
-
-fn match_regex_rule(target: &str, rule: &str, rule_group: &str) -> bool {
-    let trimmed = rule.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    match Regex::new(trimmed) {
-        Ok(regex) => regex.is_match(target),
-        Err(err) => {
-            log::warn!("invalid {} regex ignored: {}, error: {}", rule_group, trimmed, err);
-            false
-        }
-    }
-}
-
-impl FromStr for AppConfig {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let f: AppConfig = toml::from_str(s)?;
-        Ok(f)
-    }
-}
-
-impl AppConfig {
-    fn parse_with_file_type(content: &str, config_path: &Path) -> Result<Self> {
+    pub fn parse_with_file_type(content: &str, config_path: &Path) -> Result<Self> {
         let ext = config_path
             .extension()
             .and_then(|x| x.to_str())
             .map(|x| x.to_ascii_lowercase());
 
         match ext.as_deref() {
-            Some("json") => parse_json_or_toml(content),
-            Some("toml") => parse_toml_or_json(content),
+            Some("json") => parse_json(content),
+            Some("toml") => parse_toml(content),
             // Backward-compatible fallback for files with custom/no extension.
-            _ => parse_toml_or_json(content),
+            _ => parse_toml(content),
         }
     }
-}
+    pub fn inbound(&self) -> &InBoundTypeConfig {
+        &self.inbound
+    }
+    pub fn outbounds(&self) -> &[OutBoundTypeConfig] {
+        &self.outbounds
+    }
 
-fn parse_toml_or_json(content: &str) -> Result<AppConfig> {
-    match toml::from_str::<AppConfig>(content) {
-        Ok(cfg) => Ok(cfg),
-        Err(toml_err) => match serde_json::from_str::<AppConfig>(content) {
-            Ok(cfg) => Ok(cfg),
-            Err(json_err) => Err(anyhow::anyhow!(
-                "failed to parse config as TOML or JSON; toml_err: {}; json_err: {}",
-                toml_err,
-                json_err
-            )),
-        },
+    pub fn log(&self) -> &LogConfig {
+        &self.log
     }
-}
 
-fn parse_json_or_toml(content: &str) -> Result<AppConfig> {
-    match serde_json::from_str::<AppConfig>(content) {
-        Ok(cfg) => Ok(cfg),
-        Err(json_err) => match toml::from_str::<AppConfig>(content) {
-            Ok(cfg) => Ok(cfg),
-            Err(toml_err) => Err(anyhow::anyhow!(
-                "failed to parse config as JSON or TOML; json_err: {}; toml_err: {}",
-                json_err,
-                toml_err
-            )),
-        },
+    pub fn routes(&self) -> &[RouteConfig] {
+        &self.routes
     }
-}
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct LogConfig {
-    access: AccessLogConfig,
-    // error: ErrorLogConfig,
-}
-impl LogConfig {
-    pub fn level(&self) -> Result<log::Level> {
-        let level = log::Level::from_str(self.access.level.to_lowercase().as_str())?;
-        Ok(level)
-    }
-    pub fn level_filter(&self) -> Result<log::LevelFilter> {
-        let lf = log::LevelFilter::from_str(self.access.level.to_lowercase().as_str())?;
-        Ok(lf)
-    }
-    pub fn access_path(&self) -> &Path {
-        self.access.path.as_path()
+    pub(crate) fn get_forward_to_remote(
+        &self,
+        connect_request: &ConnectRequest,
+    ) -> Result<OutBoundTypeConfig> {
+        // Keep backward compatibility: if no route rules are configured,
+        // all requests still use the configured outbound.
+        if self.routes.is_empty() {
+            return Err(anyhow!("需要至少有一个路由选项"));
+        }
+        let target_addr = connect_request.dst_type().to_string();
+        for r in &self.routes {
+            if r.is_match(&target_addr) {
+                return self
+                    .outbounds()
+                    .iter()
+                    .find(|x| x.eq_name_ignore_case(r.proxy_name()))
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow!(format!("根据名称:{}没有找到匹配的项", r.proxy_name()))
+                    });
+            }
+        }
+        return Err(anyhow!("没有找到匹配的路由选项，需要配置一个任意都匹配的"));
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct AccessLogConfig {
-    level: String,
-    path: PathBuf,
+fn deserialize_outbounds<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<OutBoundTypeConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values = Vec::<toml::Value>::deserialize(deserializer)?;
+    values
+        .into_iter()
+        .map(parse_outbound_from_value)
+        .collect::<std::result::Result<Vec<_>, _>>()
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct ErrorLogConfig {
-    path: PathBuf,
+
+fn parse_outbound_from_value<E>(value: toml::Value) -> std::result::Result<OutBoundTypeConfig, E>
+where
+    E: serde::de::Error,
+{
+    let mut table = match value {
+        toml::Value::Table(table) => table,
+        _ => return Err(E::custom("outbound item must be table")),
+    };
+    let protocol = table
+        .remove("protocol")
+        .and_then(|x| x.as_str().map(|s| s.to_ascii_lowercase()))
+        .ok_or_else(|| E::custom("missing outbound protocol"))?;
+    let config_str = toml::to_string(&table).map_err(|e| E::custom(e.to_string()))?;
+    match protocol.as_str() {
+        "ethan" => {
+            let cfg: EthanOutBoundConfig =
+                toml::from_str(&config_str).map_err(|e| E::custom(e.to_string()))?;
+            Ok(OutBoundTypeConfig::Ethan(cfg))
+        }
+        "freedom" => {
+            let cfg: FreedomOutputConfig =
+                toml::from_str(&config_str).map_err(|e| E::custom(e.to_string()))?;
+            Ok(OutBoundTypeConfig::Freedom(cfg))
+        }
+        _ => Err(E::custom(format!(
+            "unsupported outbound protocol: {}",
+            protocol
+        ))),
+    }
+}
+
+fn parse_toml(content: &str) -> Result<AppConfig> {
+    toml::from_str::<AppConfig>(content)
+        .map_err(|e| anyhow!(format!("failed to parse config toml, err: {}", e)))
+}
+
+fn parse_json(content: &str) -> Result<AppConfig> {
+    serde_json::from_str::<AppConfig>(content)
+        .map_err(|e| anyhow!(format!("failed to parse json, err: {}", e)))
 }
 
 #[cfg(test)]
 mod test {
 
+    use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
+
     use super::*;
     use anyhow::Result;
 
-    #[test]
-    fn app_config_fromstr_test() -> Result<()> {
-        let config = r##"
-        [log]
-        access.level = "trace"
-        access.path = "log/access.log"
-        error.path = "/var/log/rs_proxy/error.log"
-
-        [inbound]
-        protocol = "socks5"
-        port = 1080
-
-        [outbound]
-        protocol = "ethan"
-        uid = "ethan.wang"
-        pwd = "pass01!"
-        port = 10800
-        addr = "127.0.0.1"
-
-        [outbound.tls]
-        use_tls = true
-        domain_name = "dev.ubuntu"
-        crt_path = "~/DevSpace/certs/dev.ubuntu.crt"
-
-        [outbound.dns]
-        resolver = "local"
-        server = ["8.8.8.8"]
-
-        [route]
-        domain = ["(^|\\.)google\\.com$", "^github\\.com$"]
-        ip = ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$"]
-
-"##;
-        let appconfig = AppConfig::from_str(config)?;
-        assert_eq!(appconfig.log.access.level, "trace");
-        assert_eq!(
-            appconfig.log.access.path,
-            PathBuf::from("log/access.log")
-        );
-        // assert_eq!(
-        //     appconfig.log.error.path,
-        //     PathBuf::from("/var/log/rs_proxy/error.log")
-        // );
-
-        let socks_input_config = SocksInBoundConfig::new(1080, None, None);
-        assert_eq!(
-            appconfig.inbound,
-            InBoundTypeConfig::Socks5(socks_input_config)
-        );
-
-        let ethan_output_config = EthanOutBoundConfig::new(
-            "127.0.0.1".into(),
-            10800,
-            "ethan.wang".into(),
-            "pass01!".into(),
-            TlsClientConfig {
-                use_tls: true,
-                domain_name: Some("dev.ubuntu".into()),
-                crt_path: Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
-            },
-            DnsConfig {
-                resolver: DNSResolver::Local,
-                server: Some(["8.8.8.8".into()].to_vec()),
-            },
-        );
-        assert_eq!(
-            appconfig.outbound,
-            OutputBoundTypeConfig::Ethan(ethan_output_config)
-        );
-        assert!(appconfig.route.matches_domain("www.google.com"));
-        assert!(appconfig.route.matches_ip("8.8.8.8".parse()?));
-        Ok(())
-    }
-
-    #[test]
-    fn app_config_fromstr_test2() -> Result<()> {
-        let str = r##"
-        [log]
-        access.level = "info"
-        access.path = "/var/log/rs_proxy/access.log"
-        error.path = "/var/log/rx_proxy/error.log"
-        [inbound]
-        protocol = "ethan"
-        port = 10800
-        uid = "uid"
-        pwd = "pwd"
-        [inbound.tls]
-        use_tls = true
-        crt_path = "localhost.crt"
-        key_path = "localhost.key"
-        domain_name = "localhost"
-
-        [outbound]
-        protocol = "freedom"
-        "##;
-        let config = AppConfig::from_str(&str)?;
-        let ethan = EthanInBoundConfig::new(
-            10800,
-            "uid".to_string(),
-            "pwd".to_string(),
-            TlsServerConfig {
-                use_tls: true,
-                crt_path: Some("localhost.crt".into()),
-                key_path: Some("localhost.key".into()),
-                domain_name: Some("localhost".into()),
-            },
-        );
-        assert_eq!(config.inbound, InBoundTypeConfig::Ethan(ethan));
-
-        assert_eq!(
-            config.outbound,
-            OutputBoundTypeConfig::Freedom(FreedomOutputConfig)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn route_match_test() -> Result<()> {
-        let str = r##"
+    static TOML_CONFIG: &str = r##"
         [log]
         access.level = "info"
         access.path = "/tmp/access.log"
@@ -330,82 +164,252 @@ mod test {
         [inbound]
         protocol = "socks5"
         port = 1080
+        [inbound.dns]
+        resolver = "local"
+        server=["8.8.8.8"]
 
-        [outbound]
+        [[outbounds]]
+        name="ethan"
         protocol = "ethan"
         uid = "u"
         pwd = "p"
         port = 10800
         addr = "127.0.0.1"
 
-        [outbound.tls]
-        use_tls = false
+        [outbounds.tls]
+        use_tls = true
+        domain_name="dev.ubuntu"
+        crt_path="~/DevSpace/certs/dev.ubuntu.crt"
 
-        [outbound.dns]
-        resolver = "local"
+        [[outbounds]]
+        name="freedom"
+        protocol="freedom"
 
-        [route]
-        domain = ["(^|\\.)example\\.com$", "^api\\.test\\.com$"]
-        ip = ["^10\\..*", "^2001:db8:.*", "^127\\.0\\.0\\.1$"]
+        [[routes]]
+        proxy_name = "ethan"
+        rule = "*.google.com"
+        rule_type = "domain"
+
+        [[routes]]
+        proxy_name = "ethan"
+        rule = "192.168.100.*"
+        rule_type = "ipv4"
+
+        [[routes]]
+        proxy_name = "ethan"
+        rule = "^github\\.$"
+        rule_type = "regex"
+
+        [[routes]]
+        proxy_name = "freedom"
+        rule = "*"
+        rule_type = "wildcard"
         "##;
 
-        let appconfig = AppConfig::from_str(str)?;
+    #[test]
+    fn app_config_fromstr_test() -> Result<()> {
+        let appconfig = parse_toml(TOML_CONFIG)?;
+        assert_eq!(
+            appconfig.log.level().unwrap(),
+            log::Level::from_str("info")?
+        );
+        assert_eq!(
+            appconfig.log.access_path(),
+            PathBuf::from("/tmp/access.log")
+        );
+        let dns_config = DnsConfig {
+            resolver: DNSResolver::Local,
+            server: Some(["8.8.8.8".into()].to_vec()),
+        };
+        let socks_input_config = SocksInBoundConfig::new(1080, None, None, dns_config);
+        assert_eq!(
+            appconfig.inbound,
+            InBoundTypeConfig::Socks5(socks_input_config)
+        );
 
-        let req1 = ConnectRequest::new(443, DstType::DomainName("www.example.com".into()));
-        assert!(appconfig.should_forward_to_remote(&req1));
-
-        let req2 = ConnectRequest::new(443, DstType::DomainName("no-match.com".into()));
-        assert!(!appconfig.should_forward_to_remote(&req2));
-
-        let req3 = ConnectRequest::new(80, DstType::Ipv4("10.2.3.4".parse()?));
-        assert!(appconfig.should_forward_to_remote(&req3));
-
-        let req4 = ConnectRequest::new(80, DstType::Ipv4("11.2.3.4".parse()?));
-        assert!(!appconfig.should_forward_to_remote(&req4));
+        let ethan_output_config = EthanOutBoundConfig::new(
+            "ethan".into(),
+            "127.0.0.1".into(),
+            10800,
+            "u".into(),
+            "p".into(),
+            TlsClientConfig {
+                use_tls: true,
+                domain_name: Some("dev.ubuntu".into()),
+                crt_path: Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
+            },
+        );
+        let freedom_output_config = FreedomOutputConfig::new("freedom");
+        assert_eq!(
+            appconfig.outbounds,
+            [
+                OutBoundTypeConfig::Ethan(ethan_output_config),
+                OutBoundTypeConfig::Freedom(freedom_output_config)
+            ]
+        );
 
         Ok(())
     }
 
-        #[test]
-        fn app_config_from_json_test() -> Result<()> {
-                let json = r##"
-                {
-                    "log": {
-                        "access": {
-                            "level": "info",
-                            "path": "log/access.log"
-                        }
-                    },
-                    "inbound": {
-                        "protocol": "socks5",
-                        "port": 1080
-                    },
-                    "outbound": {
-                        "protocol": "ethan",
-                        "uid": "ethan.wang",
-                        "pwd": "pass01!",
-                        "port": 10800,
-                        "addr": "127.0.0.1",
-                        "tls": {
-                            "use_tls": false
-                        },
-                        "dns": {
-                            "resolver": "local",
-                            "server": ["8.8.8.8"]
-                        }
-                    },
-                    "route": {
-                        "domain": ["(^|\\.)example\\.com$"],
-                        "ip": ["^10\\..*"]
-                    }
-                }
-                "##;
+    const JSONCONIFG: &'static str = r##"
+{
+  "log": {
+    "access": {
+      "level": "info",
+      "path": "/tmp/access.log"
+    },
+    "error": {
+      "path": "/var/log/rs_proxy/error.log"
+    }
+  },
+  "inbound": {
+    "protocol": "socks5",
+    "port": 1080,
+    "dns":{
+      "resolver":"local",
+      "server":["8.8.8.8"]
+    }
+  },
+  "outbounds": [
+    {
+      "name": "ethan",
+      "protocol": "ethan",
+      "uid": "u",
+      "pwd": "p",
+      "port": 10800,
+      "addr": "127.0.0.1",
+      "tls": {
+        "use_tls": true,
+        "domain_name": "dev.ubuntu",
+        "crt_path": "~/DevSpace/certs/dev.ubuntu.crt"
+      },
+      "dns": {
+        "resolver": "local",
+        "server": [
+          "8.8.8.8"
+        ]
+      }
+    },
+    {
+      "name": "freedom",
+      "protocol": "freedom"
+    }
+  ],
+  "routes": [
+    {
+      "proxy_name": "ethan",
+      "rule": "*.google.com",
+      "rule_type": "Domain"
+    },
+    {
+      "proxy_name": "ethan",
+      "rule": "192.168.100.*",
+      "rule_type": "Ipv4"
+    },
+    {
+      "proxy_name": "ethan",
+      "rule": "^github\\.$",
+      "rule_type": "Regex"
+    },
+    {
+      "proxy_name": "freedom",
+      "rule": "*",
+      "rule_type": "Wildcard"
+    }
+  ]
+}"##;
 
-                let appconfig = parse_json_or_toml(json)?;
-                let req_domain = ConnectRequest::new(443, DstType::DomainName("www.example.com".into()));
-                let req_ip = ConnectRequest::new(80, DstType::Ipv4("10.1.2.3".parse()?));
-                assert!(appconfig.should_forward_to_remote(&req_domain));
-                assert!(appconfig.should_forward_to_remote(&req_ip));
-                Ok(())
+    #[test]
+    fn app_config_from_json_test() -> Result<()> {
+        let appconfig = parse_json(JSONCONIFG)?;
+        assert_eq!(
+            appconfig.log.level().unwrap(),
+            log::Level::from_str("info")?
+        );
+        assert_eq!(
+            appconfig.log.access_path(),
+            PathBuf::from("/tmp/access.log")
+        );
+        let dns_config = DnsConfig {
+            resolver: DNSResolver::Local,
+            server: Some(["8.8.8.8".into()].to_vec()),
+        };
+        let socks_input_config = SocksInBoundConfig::new(1080, None, None, dns_config);
+        assert_eq!(
+            appconfig.inbound,
+            InBoundTypeConfig::Socks5(socks_input_config)
+        );
+
+        let ethan_output_config = EthanOutBoundConfig::new(
+            "ethan".into(),
+            "127.0.0.1".into(),
+            10800,
+            "u".into(),
+            "p".into(),
+            TlsClientConfig {
+                use_tls: true,
+                domain_name: Some("dev.ubuntu".into()),
+                crt_path: Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
+            },
+        );
+        let freedom_output_config = FreedomOutputConfig::new("freedom");
+        assert_eq!(
+            appconfig.outbounds,
+            [
+                OutBoundTypeConfig::Ethan(ethan_output_config),
+                OutBoundTypeConfig::Freedom(freedom_output_config)
+            ]
+        );
+
+        assert_eq!(appconfig.routes().len(), 4);
+        assert_eq!(
+            appconfig.routes(),
+            [
+                RouteConfig::new(
+                    "*.google.com",
+                    "ethan",
+                    crate::route_config::RuleType::Domain
+                ),
+                RouteConfig::new(
+                    "192.168.100.*",
+                    "ethan",
+                    crate::route_config::RuleType::Ipv4
+                ),
+                RouteConfig::new("^github\\.$", "ethan", crate::route_config::RuleType::Regex),
+                RouteConfig::new("*", "freedom", crate::route_config::RuleType::Wildcard),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn get_outbound_config_test() -> Result<()> {
+        let appconfig = parse_json(JSONCONIFG)?;
+        let freedom_outbound_config =
+            OutBoundTypeConfig::Freedom(FreedomOutputConfig::new("freedom"));
+
+        let bing_request = ConnectRequest::new(1090, DstType::DomainName("cn.bing.com".into()));
+        let get_outbound_config = appconfig.get_forward_to_remote(&bing_request)?;
+        assert_eq!(get_outbound_config, freedom_outbound_config);
+
+        let ipv4_request = ConnectRequest::new(
+            443,
+            DstType::Ipv4(Ipv4Addr::from_octets([192, 168, 100, 100])),
+        );
+        let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request)?;
+        if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
+            assert_eq!(ethan_config.name(), "ethan");
+        } else {
+            return Err(anyhow!("ipv4,should be ethan OutBoundType"));
         }
+
+        let domain_request = ConnectRequest::new(443, DstType::DomainName("www.google.com".into()));
+        let get_outbound_config = appconfig.get_forward_to_remote(&domain_request)?;
+        if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
+            assert_eq!(ethan_config.name(), "ethan");
+        } else {
+            return Err(anyhow!("google.com .should be ethan OutBoundType"));
+        }
+        Ok(())
+    }
 }

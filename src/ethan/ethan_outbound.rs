@@ -16,10 +16,8 @@ use tokio_rustls::{
 use webpki_roots;
 
 use crate::{
-    DNSResolver,
     app_config::EthanOutBoundConfig,
-    dns_resolver::{pick_fastet_ipadd, resolve_dns},
-    ethan::ethan_proto::{AuthRequest, ConnectRequest, DstType, EthanResponse},
+    ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     traits::{async_read_write::AsyncReadWrite, proxy_outbound::OutBoundProxy},
 };
 
@@ -97,21 +95,7 @@ impl EthanOutBoundConnector {
     }
 
     async fn bind_request(&mut self) -> Result<()> {
-        let mut dst = self.connect_request.dst_type().clone();
-        if let DstType::DomainName(ref ds) = dst
-            && let DNSResolver::Local = self.config.dns().resolver
-        {
-            let ips = resolve_dns(ds).await?;
-            let ip = pick_fastet_ipadd(&ips, self.connect_request.port())
-                .await
-                .ok_or_else(|| anyhow!(format!("can't resolve dns:{} to ip", ds)))?;
-            match ip {
-                std::net::IpAddr::V4(ipv4_addr) => dst = DstType::Ipv4(ipv4_addr),
-                std::net::IpAddr::V6(ipv6_addr) => dst = DstType::Ipv6(ipv6_addr),
-            }
-        }
-        let ccmd = ConnectRequest::new(self.connect_request.port(), dst);
-        let ccmd_bytes = ccmd.as_bytes();
+        let ccmd_bytes = self.connect_request.as_bytes();
         self.stream.write_u8(ccmd_bytes.len() as u8).await?;
         self.stream.write_all(&ccmd_bytes).await?;
 
@@ -153,9 +137,17 @@ impl EthanOutBoundConnector {
             .with_no_client_auth();
         let connector = TlsConnector::from(Arc::new(config));
 
-        let domain_name =
+        let server_name =
             ServerName::try_from(domain_name.to_string()).expect("domain name is incorrect");
-        let stream = connector.connect(domain_name, self.stream).await?;
+
+        let stream = connector
+            .connect(server_name, self.stream)
+            .await
+            .map_err(|e| {
+                log::error!("hanle tls stream error: {:?}", e);
+                anyhow!(e)
+            })?;
+
         log::trace!("client wrap straem with tls success!");
         Ok(Box::new(stream))
     }

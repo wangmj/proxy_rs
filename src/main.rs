@@ -8,9 +8,20 @@ use proxy_rs::{APP_CONFIG, factory::inbound_factory::InBoundFactory};
 
 #[tokio::main]
 async fn main() {
+    init();
+    let inbound = InBoundFactory::get(APP_CONFIG.inbound()).await;
+    inbound.start().await;
+}
+//整体的初始化
+fn init() {
+    init_logger();
+}
+//初始化日志
+fn init_logger() {
     let log_config = APP_CONFIG.log();
     let lf = log_config.level_filter().expect("log level failed!");
     let path = log_config.access_path();
+
     touch_file_if_noexist(path);
     fern::Dispatch::new()
         .level(lf)
@@ -18,10 +29,7 @@ async fn main() {
         .chain(fern::log_file(path).expect("log to file failed!"))
         .apply()
         .expect("log config failed!");
-    let inbound = InBoundFactory::get(APP_CONFIG.inbound()).await;
-    inbound.start().await;
 }
-
 // const SUPPORT_FILE_EXTENSION_NAME: [&'static str; 2] = ["log", "txt"];
 fn touch_file_if_noexist(p: impl AsRef<Path>) {
     let p = p.as_ref();
