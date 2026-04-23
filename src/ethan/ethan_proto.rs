@@ -211,6 +211,11 @@ impl EthanResponse {
         }
         v
     }
+    pub fn to_response_bytes(self)->Vec<u8>{
+        let mut bytes= self.as_bytes();
+        bytes.insert(0, bytes.len() as u8);
+        bytes
+    }
 
     fn lens(&self) -> usize {
         match &self.reason {

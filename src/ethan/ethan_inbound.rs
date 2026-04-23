@@ -42,8 +42,6 @@ impl InBoundProxy for EthanInBound {
         log::info!("ethan server start listening at port: {}", port);
         while let Ok((stream, addr)) = listener.accept().await {
             let config = self.config.clone();
-            //todo: 此处没有将正在处理的线程保存，所以在停止时可能会导致正在处理的数据丢失。
-            //等待再次考虑
             let connector = EthanInBoundConnector::new(stream, addr, config);
             connector.handlstream().await;
         }
@@ -64,22 +62,16 @@ impl EthanInBoundConnector {
     }
 
     async fn handlstream(mut self) {
-        log::info!("ethan server rev connect, remote :{:?}", self.remote_addr);
-        let config = self.config.clone();
+        log::trace!("ethan server rev connect, remote :{:?}", self.remote_addr);
         tokio::spawn(async move {
+            //auth
             if self.auth_handle().await.is_err() {
                 log::error!("ethan server rev auth request, but failed!");
                 return;
             }
+            //bind
             let mut out_stream = self.bind_handle().await.expect("bind to server failed");
-            let tls_config = config.tls();
-            let mut stream = {
-                if tls_config.use_tls {
-                    self.wraptls().await.unwrap()
-                } else {
-                    Box::new(self.stream)
-                }
-            };
+            let mut stream = self.wraptls().await.expect("TLS 过程出错");
 
             match tokio::io::copy_bidirectional(&mut *stream, &mut out_stream).await {
                 Ok((n, m)) => {
@@ -93,15 +85,17 @@ impl EthanInBoundConnector {
     }
 
     async fn auth_handle(&mut self) -> Result<()> {
-        let config = self.config.clone();
-        let lens = self.stream.read_u8().await? as usize;
-        log::trace!("ethan server received client auth request,lens: {}", lens);
-        let mut buff = vec![0u8; lens];
+        //read lens
+        let len = self.stream.read_u8().await? as usize;
+        log::trace!("ethan server received client auth request,lens: {}", len);
+        //read auth buff
+        let mut buff = vec![0u8; len];
         self.stream.read_exact(&mut buff).await?;
         let request = AuthRequest::try_from(buff.as_slice())?;
         log::trace!("ethan server received client auth request: {:?}", request);
-        let uid_in_config = config.uid();
-        let pwd_in_config = config.pwd();
+        let uid_in_config = self.config.uid();
+        let pwd_in_config = self.config.pwd();
+        //check uid and pwd is correct
         if request.uid().eq(uid_in_config) && request.pwd().eq(pwd_in_config) {
             let response = EthanResponse::new(true, None);
             let response = response.as_bytes();
@@ -115,16 +109,17 @@ impl EthanInBoundConnector {
             let response = response.as_bytes();
             self.stream.write_u8(response.len() as u8).await?;
             self.stream.write_all(response.as_slice()).await?;
-            Err(anyhow!("uid and pwd is incorrect"))
+            Err(anyhow!("uid and pwd is incorrect!"))
         }
     }
 
     async fn bind_handle(&mut self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
-        let lens = self.stream.read_u8().await? as usize;
-        let mut buff = vec![0u8; lens];
+        //read len
+        let len = self.stream.read_u8().await? as usize;
+        let mut buff = vec![0u8; len];
         self.stream.read_exact(&mut buff).await?;
         let request = ConnectRequest::try_from(buff.as_slice())?;
-        log::info!("received connect server: {:?}", request);
+        log::trace!("received connect server: {:?}", request);
 
         let output_config = APP_CONFIG
             .get_forward_to_remote(&request)
@@ -133,15 +128,13 @@ impl EthanInBoundConnector {
         match output_bound.connect_server(request).await {
             Ok(out_stream) => {
                 let response = EthanResponse::new(true, None);
-                let bytes = response.as_bytes();
-                self.stream.write_u8(bytes.len() as u8).await?;
+                let bytes = response.to_response_bytes();
                 self.stream.write_all(&bytes).await?;
                 Ok(out_stream)
             }
             Err(err) => {
                 let response = EthanResponse::new(false, Some(err.to_string()));
-                let bytes = response.as_bytes();
-                self.stream.write_u8(bytes.len() as u8).await?;
+                let bytes = response.to_response_bytes();
                 self.stream.write_all(&bytes).await?;
                 Err(err)
             }
@@ -149,50 +142,33 @@ impl EthanInBoundConnector {
     }
 
     async fn wraptls(self) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
-        log::trace!("server start wrap tls!");
-        let tls_config = self.config.tls();
-        if tls_config.crt_path.is_none()
-            || tls_config.key_path.is_none()
-            || tls_config.domain_name.is_none()
-        {
-            return Err(anyhow!(
-                "use tls, crt path, key path, domain name must has value"
-            ));
-        }
-        let key_path = match tls_config.key_path {
-            Some(ref k) => {
-                let expanded = expand_path(k);
-                log::trace!("key path:{}", expanded.display());
-                if expanded.exists() {
-                    expanded
-                } else {
-                    return Err(anyhow!("key path not found: {}", expanded.display()));
+        match self.config.tls() {
+            None => Ok(Box::new(self.stream) as Box<_>),
+            Some(tls_config) => {
+                log::trace!("server start wrap tls!");
+                let key_path_expanded = expand_path(&tls_config.key_path);
+                if !key_path_expanded.exists() {
+                    return Err(anyhow!(
+                        "key path not found: {}",
+                        key_path_expanded.display()
+                    ));
                 }
-            }
-            None => return Err(anyhow!("key path can't null")),
-        };
-        let crt_path = match tls_config.crt_path {
-            Some(ref k) => {
-                let expanded = expand_path(k);
-                log::trace!("crt path:{}", expanded.display());
-                if expanded.exists() {
-                    expanded
-                } else {
-                    return Err(anyhow!("crt path not found: {}", expanded.display()));
-                }
-            }
-            None => return Err(anyhow!("crt path can't null")),
-        };
-        let _domain_name = match tls_config.domain_name {
-            Some(ref d) => d.clone(),
-            None => return Err(anyhow!("domain name can't null")),
-        };
 
-        let config = get_tsl_server_config(&crt_path, &key_path).await?;
-        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-        let accept = acceptor.accept(self.stream).await?;
-        log::trace!("server  wrap stream with tls success!");
-        Ok(Box::new(accept))
+                let crt_path_expanded = expand_path(&tls_config.crt_path);
+                if !crt_path_expanded.exists() {
+                    return Err(anyhow!(
+                        "crt path not found: {}",
+                        crt_path_expanded.display()
+                    ));
+                }
+
+                let config = get_tsl_server_config(&crt_path_expanded, &key_path_expanded).await?;
+                let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+                let accept = acceptor.accept(self.stream).await?;
+                log::trace!("server  wrap stream with tls success!");
+                Ok(Box::new(accept) as Box<_>)
+            }
+        }
     }
 }
 
@@ -257,7 +233,9 @@ mod test {
     #[test]
     fn expand_path_test() {
         let final_path = expand_path(Path::new("./file.json"));
-        assert!(final_path.display().to_string().chars().count()>"/file.json".chars().count());
-        println!("{}",final_path.display());
+        assert!(final_path.display().to_string().chars().count() > "/file.json".chars().count());
+        println!("{}", final_path.display());
     }
+
+   
 }

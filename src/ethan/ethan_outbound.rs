@@ -156,9 +156,9 @@ impl EthanOutBoundConnector {
                 })?;
 
             log::trace!("client wrap straem with tls success!");
-            Ok(Box::new(stream))
+            Ok(Box::new(stream) as Box<_>)
         } else {
-            Ok(Box::new(self.stream))
+            Ok(Box::new(self.stream) as Box<_>)
         }
     }
 }
