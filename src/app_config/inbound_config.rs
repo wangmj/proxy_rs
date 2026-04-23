@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use serde::{Deserialize, Deserializer, de::{self, Error, Unexpected}};
 
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug,  serde::Deserialize, PartialEq)]
 #[serde(untagged)] // 可选：避免枚举项的字段冲突，仅在枚举项有不同结构体字段时需要
 pub enum InBoundTypeConfig {
     Socks5(SocksInBoundConfig),
     Ethan(EthanInBoundConfig),
 }
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone,  serde::Deserialize, PartialEq)]
 pub struct SocksInBoundConfig {
     port: u16,
     dns:DnsConfig,
@@ -35,12 +35,12 @@ impl SocksInBoundConfig {
 }
 
 
-#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct DnsConfig {
     pub resolver: DNSResolver,
     pub server: Option<Vec<String>>,
 }
-#[derive(Debug, serde::Serialize, Clone, PartialEq)]
+#[derive(Debug,  Clone, PartialEq)]
 pub enum DNSResolver {
     Local,
     Remote,
@@ -78,7 +78,7 @@ impl<'de> Deserialize<'de> for DNSResolver {
 }
 
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone,  serde::Deserialize, PartialEq)]
 pub struct EthanInBoundConfig {
     port: u16,
     uid: String,
@@ -138,7 +138,7 @@ where
         )),
     }
 }
-#[derive(Debug, serde::Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug,  Deserialize, Clone, PartialEq)]
 pub struct TlsServerConfig {
     pub use_tls: bool,
     pub crt_path: Option<PathBuf>,   //公钥+证书链存放地址,

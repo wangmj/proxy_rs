@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug,  serde::Deserialize)]
 pub struct LogConfig {
     access: AccessLogConfig,
     // error: ErrorLogConfig,
@@ -23,12 +23,12 @@ impl LogConfig {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug,  serde::Deserialize)]
 pub struct AccessLogConfig {
     level: String,
     path: PathBuf,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug,  serde::Deserialize)]
 pub struct ErrorLogConfig {
     path: PathBuf,
 }

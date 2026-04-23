@@ -66,26 +66,36 @@ impl EthanOutBoundConnector {
     }
 
     async fn auth_request(&mut self) -> Result<()> {
-        log::trace!("ethan client start auth with server");
+        log::info!("ethan client start auth with server");
 
         let auth_request =
             AuthRequest::new(self.config.uid().to_string(), self.config.pwd().to_string());
         let auth_bytes = auth_request.as_bytes();
         self.stream.write_u8(auth_bytes.len() as u8).await?;
         self.stream.write_all(&auth_bytes).await?;
-        log::trace!("ethan client send auth to server");
+
+        log::trace!("ethan client had send auth info to server, and then wait server");
 
         let len = self.stream.read_u8().await? as usize;
         let mut buff = vec![0u8; len];
         self.stream.read_exact(&mut buff).await?;
+
         log::trace!("ethan client received server auth response");
+
         let response = EthanResponse::try_from(&buff[..])?;
         if response.res() {
-            log::trace!("ethan client received server auth response: success");
+            log::info!("ethan client received server auth response: success");
             Ok(())
         } else {
+            log::error!(
+                "ethan client auth failed. the reason is: {}",
+                response
+                    .reason()
+                    .as_deref()
+                    .unwrap_or("server not return auth failed reason")
+            );
             Err(anyhow!(
-                "auth failed. err: {}",
+                "ethan client auth failed. the reason is: {}",
                 response
                     .reason()
                     .as_deref()
@@ -118,37 +128,37 @@ impl EthanOutBoundConnector {
 
     async fn wraptls(self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
         let tls_config = self.config.tls();
-        log::trace!("client start wrap tls");
-        let domain_name = match tls_config.domain_name {
-            Some(ref d) => d,
-            None => return Err(anyhow!("domain name can't be null")),
-        };
-        let mut root_cert_store =
-            RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        if let Some(ref crt_path) = tls_config.crt_path
-            && !crt_path.to_string_lossy().is_empty()
-        {
-            let cert = CertificateDer::from_pem_file(crt_path)?;
-            root_cert_store.add(cert)?;
+        if let Some(tls_config) = tls_config {
+            log::trace!("client start wrap tls");
+
+            let domain_name = &tls_config.domain_name;
+            let mut root_cert_store =
+                RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            if !tls_config.crt_path.to_string_lossy().is_empty() {
+                let cert = CertificateDer::from_pem_file(&tls_config.crt_path)?;
+                root_cert_store.add(cert)?;
+            }
+
+            let config = rustls::ClientConfig::builder()
+                .with_root_certificates(Arc::new(root_cert_store))
+                .with_no_client_auth();
+            let connector = TlsConnector::from(Arc::new(config));
+
+            let server_name =
+                ServerName::try_from(domain_name.to_string()).expect("domain name is incorrect");
+
+            let stream = connector
+                .connect(server_name, self.stream)
+                .await
+                .map_err(|e| {
+                    log::error!("hanle tls stream error: {:?}", e);
+                    anyhow!(e)
+                })?;
+
+            log::trace!("client wrap straem with tls success!");
+            Ok(Box::new(stream))
+        } else {
+            Ok(Box::new(self.stream))
         }
-
-        let config = rustls::ClientConfig::builder()
-            .with_root_certificates(Arc::new(root_cert_store))
-            .with_no_client_auth();
-        let connector = TlsConnector::from(Arc::new(config));
-
-        let server_name =
-            ServerName::try_from(domain_name.to_string()).expect("domain name is incorrect");
-
-        let stream = connector
-            .connect(server_name, self.stream)
-            .await
-            .map_err(|e| {
-                log::error!("hanle tls stream error: {:?}", e);
-                anyhow!(e)
-            })?;
-
-        log::trace!("client wrap straem with tls success!");
-        Ok(Box::new(stream))
     }
 }

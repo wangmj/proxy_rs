@@ -4,14 +4,11 @@ use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
 use serde::{Deserialize, Deserializer};
-use std::{env, net::IpAddr, path::Path, sync::LazyLock};
+use std::{env, path::Path, sync::LazyLock};
 
 use crate::log_config::LogConfig;
-use crate::route_config::RouteConfig;
-use crate::{
-    ethan::ethan_proto::{ConnectRequest, DstType},
-    start_args::StartArgs,
-};
+use crate::route_config::RouteManager;
+use crate::{ethan::ethan_proto::ConnectRequest, start_args::StartArgs};
 pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> AppConfig {
@@ -29,15 +26,15 @@ fn get_app_config_from_args() -> AppConfig {
         .expect("config format is incorrect.")
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 pub struct AppConfig {
     log: LogConfig,
     #[serde(deserialize_with = "deserialize_protocol")]
     inbound: InBoundTypeConfig,
-    #[serde(deserialize_with = "deserialize_outbounds")]
+    // #[serde(deserialize_with = "deserialize_outbounds")]
     outbounds: Vec<OutBoundTypeConfig>,
-    #[serde(default)]
-    routes: Vec<RouteConfig>,
+    // #[serde(default)]
+    routes: RouteManager,
 }
 impl AppConfig {
     pub fn parse_with_file_type(content: &str, config_path: &Path) -> Result<Self> {
@@ -64,7 +61,7 @@ impl AppConfig {
         &self.log
     }
 
-    pub fn routes(&self) -> &[RouteConfig] {
+    pub fn routes(&self) -> &RouteManager {
         &self.routes
     }
 
@@ -77,64 +74,14 @@ impl AppConfig {
         if self.routes.is_empty() {
             return Err(anyhow!("需要至少有一个路由选项"));
         }
-        let target_addr = connect_request.dst_type().to_string();
-        for r in &self.routes {
-            if r.is_match(&target_addr) {
-                return self
-                    .outbounds()
-                    .iter()
-                    .find(|x| x.eq_name_ignore_case(r.proxy_name()))
-                    .cloned()
-                    .ok_or_else(|| {
-                        anyhow!(format!("根据名称:{}没有找到匹配的项", r.proxy_name()))
-                    });
-            }
-        }
-        return Err(anyhow!("没有找到匹配的路由选项，需要配置一个任意都匹配的"));
-    }
-}
-
-fn deserialize_outbounds<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Vec<OutBoundTypeConfig>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let values = Vec::<toml::Value>::deserialize(deserializer)?;
-    values
-        .into_iter()
-        .map(parse_outbound_from_value)
-        .collect::<std::result::Result<Vec<_>, _>>()
-}
-
-fn parse_outbound_from_value<E>(value: toml::Value) -> std::result::Result<OutBoundTypeConfig, E>
-where
-    E: serde::de::Error,
-{
-    let mut table = match value {
-        toml::Value::Table(table) => table,
-        _ => return Err(E::custom("outbound item must be table")),
-    };
-    let protocol = table
-        .remove("protocol")
-        .and_then(|x| x.as_str().map(|s| s.to_ascii_lowercase()))
-        .ok_or_else(|| E::custom("missing outbound protocol"))?;
-    let config_str = toml::to_string(&table).map_err(|e| E::custom(e.to_string()))?;
-    match protocol.as_str() {
-        "ethan" => {
-            let cfg: EthanOutBoundConfig =
-                toml::from_str(&config_str).map_err(|e| E::custom(e.to_string()))?;
-            Ok(OutBoundTypeConfig::Ethan(cfg))
-        }
-        "freedom" => {
-            let cfg: FreedomOutputConfig =
-                toml::from_str(&config_str).map_err(|e| E::custom(e.to_string()))?;
-            Ok(OutBoundTypeConfig::Freedom(cfg))
-        }
-        _ => Err(E::custom(format!(
-            "unsupported outbound protocol: {}",
-            protocol
-        ))),
+        let target_dst_type = connect_request.dst_type();
+        let route = self.routes().get_match(target_dst_type);
+        return self
+            .outbounds()
+            .iter()
+            .find(|x| x.eq_name_ignore_case(route.proxy_name()))
+            .cloned()
+            .ok_or_else(|| anyhow!(format!("根据名称:{}没有找到匹配的项", route.proxy_name())));
     }
 }
 
@@ -152,6 +99,8 @@ fn parse_json(content: &str) -> Result<AppConfig> {
 mod test {
 
     use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
+
+    use crate::{ethan::ethan_proto::DstType, route_config::RouteConfig};
 
     use super::*;
     use anyhow::Result;
@@ -207,7 +156,7 @@ mod test {
         "##;
 
     #[test]
-    fn app_config_fromstr_test() -> Result<()> {
+    fn app_config_parse_toml_test() -> Result<()> {
         let appconfig = parse_toml(TOML_CONFIG)?;
         assert_eq!(
             appconfig.log.level().unwrap(),
@@ -233,11 +182,11 @@ mod test {
             10800,
             "u".into(),
             "p".into(),
-            TlsClientConfig {
+            Some(TlsClientConfig {
                 use_tls: true,
-                domain_name: Some("dev.ubuntu".into()),
-                crt_path: Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
-            },
+                domain_name: "dev.ubuntu".into(),
+                crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
+            }),
         );
         let freedom_output_config = FreedomOutputConfig::new("freedom");
         assert_eq!(
@@ -247,6 +196,7 @@ mod test {
                 OutBoundTypeConfig::Freedom(freedom_output_config)
             ]
         );
+        assert_eq!(appconfig.routes().len(),4);
 
         Ok(())
     }
@@ -320,7 +270,7 @@ mod test {
 }"##;
 
     #[test]
-    fn app_config_from_json_test() -> Result<()> {
+    fn app_config_parse_json_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
         assert_eq!(
             appconfig.log.level().unwrap(),
@@ -346,11 +296,11 @@ mod test {
             10800,
             "u".into(),
             "p".into(),
-            TlsClientConfig {
+            Some(TlsClientConfig {
                 use_tls: true,
-                domain_name: Some("dev.ubuntu".into()),
-                crt_path: Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
-            },
+                domain_name: "dev.ubuntu".into(),
+                crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
+            }),
         );
         let freedom_output_config = FreedomOutputConfig::new("freedom");
         assert_eq!(
@@ -364,7 +314,7 @@ mod test {
         assert_eq!(appconfig.routes().len(), 4);
         assert_eq!(
             appconfig.routes(),
-            [
+            &RouteManager::new([
                 RouteConfig::new(
                     "*.google.com",
                     "ethan",
@@ -377,13 +327,13 @@ mod test {
                 ),
                 RouteConfig::new("^github\\.$", "ethan", crate::route_config::RuleType::Regex),
                 RouteConfig::new("*", "freedom", crate::route_config::RuleType::Wildcard),
-            ]
+            ])
         );
         Ok(())
     }
 
     #[test]
-    fn get_outbound_config_test() -> Result<()> {
+    fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
         let freedom_outbound_config =
             OutBoundTypeConfig::Freedom(FreedomOutputConfig::new("freedom"));

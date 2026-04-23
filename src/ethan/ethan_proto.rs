@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
 use std::{
+    fmt::Display,
     mem,
     net::{Ipv4Addr, Ipv6Addr},
 };
@@ -71,12 +72,12 @@ impl DstType {
     }
 }
 
-impl ToString for DstType {
-    fn to_string(&self) -> String {
-        match self {
-            DstType::Ipv4(ipv4_addr) => ipv4_addr.to_string(),
-            DstType::Ipv6(ipv6_addr) => ipv6_addr.to_string(),
-            DstType::DomainName(d) => d.to_string(),
+impl Display for DstType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            DstType::Ipv4(ipv4_addr) => write!(f, "ipv4:{ipv4_addr}"),
+            DstType::Ipv6(ipv6_addr) => write!(f, "ipv6:{ipv6_addr}"),
+            DstType::DomainName(name) => write!(f, "domain:{name}"),
         }
     }
 }
@@ -97,6 +98,20 @@ impl ConnectRequest {
     }
     pub fn dst_type(&self) -> &DstType {
         &self.dst_type
+    }
+    pub fn dst_as_atp(&self)->SocksAddressType{
+        match self.dst_type() {
+            DstType::Ipv4(_) => SocksAddressType::Ipv4,
+            DstType::Ipv6(_) => SocksAddressType::Ipv6,
+            DstType::DomainName(_) => SocksAddressType::Domain,
+        }
+    }
+    pub fn addr(&self)->Vec<u8>{
+        match self.dst_type(){
+            DstType::Ipv4(ipv4_addr) => ipv4_addr.octets().to_vec(),
+            DstType::Ipv6(ipv6_addr) => ipv6_addr.octets().to_vec(),
+            DstType::DomainName(name) => name.as_bytes().to_vec(),
+        }
     }
     pub fn port(&self) -> u16 {
         self.dst_port
@@ -154,6 +169,11 @@ impl TryFrom<(SocksAddressType, &[u8], u16)> for ConnectRequest {
     }
 }
 
+impl Display for ConnectRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "addr {}, port {}", self.dst_type, self.dst_port)
+    }
+}
 ///连接结果
 #[derive(Debug, PartialEq)]
 pub(crate) struct EthanResponse {
