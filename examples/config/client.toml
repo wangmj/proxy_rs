@@ -1,5 +1,5 @@
 [log]
-access.level = "trace"
+access.level = "info"
 access.path = "log/access.log"
 error.path = "/var/log/rs_proxy/error.log"
 
@@ -23,7 +23,7 @@ domain_name = "dev.ubuntu"
 crt_path = "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
 
 [[outbounds]]
-to = "direct"
+name = "direct"
 protocol = "direct"
 
 [[routes]]
