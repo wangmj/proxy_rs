@@ -9,10 +9,10 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tokio::net::TcpStream;
 
-pub struct Freedom;
+pub struct Direct;
 
 #[async_trait]
-impl OutBoundProxy for Freedom {
+impl OutBoundProxy for Direct {
     async fn connect_server(
         &self,
         connect_request: ConnectRequest,

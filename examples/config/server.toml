@@ -15,4 +15,4 @@ key_path = "localhost.key"
 domain_name = "localhost"
 
 [outbound]
-protocol = "freedom"
+protocol = "direct"

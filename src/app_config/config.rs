@@ -129,8 +129,8 @@ mod test {
         crt_path="~/DevSpace/certs/dev.ubuntu.crt"
 
         [[outbounds]]
-        name="freedom"
-        protocol="freedom"
+        name="direct"
+        protocol="direct"
 
         [[routes]]
         to = "ethan"
@@ -148,7 +148,7 @@ mod test {
         rule_type = "regex"
 
         [[routes]]
-        to = "freedom"
+        to = "direct"
         rule = "*"
         rule_type = "wildcard"
         "##;
@@ -186,12 +186,12 @@ mod test {
                 crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
             }),
         );
-        let freedom_output_config = FreedomOutputConfig::new("freedom");
+        let direct_output_config = DirectOutputConfig::new("direct");
         assert_eq!(
             appconfig.outbounds,
             [
                 OutBoundTypeConfig::Ethan(ethan_output_config),
-                OutBoundTypeConfig::Freedom(freedom_output_config)
+                OutBoundTypeConfig::Direct(direct_output_config)
             ]
         );
         assert_eq!(appconfig.routes().len(), 4);
@@ -239,8 +239,8 @@ mod test {
       }
     },
     {
-      "name": "freedom",
-      "protocol": "freedom"
+      "name": "direct",
+      "protocol": "direct"
     }
   ],
   "routes": [
@@ -260,7 +260,7 @@ mod test {
       "rule_type": "Regex"
     },
     {
-      "to": "freedom",
+      "to": "direct",
       "rule": "*",
       "rule_type": "Wildcard"
     }
@@ -300,12 +300,12 @@ mod test {
                 crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
             }),
         );
-        let freedom_output_config = FreedomOutputConfig::new("freedom");
+        let direct_output_config = DirectOutputConfig::new("direct");
         assert_eq!(
             appconfig.outbounds,
             [
                 OutBoundTypeConfig::Ethan(ethan_output_config),
-                OutBoundTypeConfig::Freedom(freedom_output_config)
+                OutBoundTypeConfig::Direct(direct_output_config)
             ]
         );
 
@@ -324,7 +324,7 @@ mod test {
                     crate::route_config::RuleType::Ipv4
                 ),
                 RouteConfig::new("^github\\.$", "ethan", crate::route_config::RuleType::Regex),
-                RouteConfig::new("*", "freedom", crate::route_config::RuleType::Wildcard),
+                RouteConfig::new("*", "direct", crate::route_config::RuleType::Wildcard),
             ])
         );
         Ok(())
@@ -333,12 +333,12 @@ mod test {
     #[test]
     fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
-        let freedom_outbound_config =
-            OutBoundTypeConfig::Freedom(FreedomOutputConfig::new("freedom"));
+        let direct_outbound_config =
+            OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
 
         let bing_request = ConnectRequest::new(1090, DstType::DomainName("cn.bing.com".into()));
         let get_outbound_config = appconfig.get_forward_to_remote(&bing_request)?;
-        assert_eq!(get_outbound_config, freedom_outbound_config);
+        assert_eq!(get_outbound_config, direct_outbound_config);
 
         let ipv4_request = ConnectRequest::new(
             443,

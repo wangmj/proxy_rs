@@ -268,7 +268,7 @@ mod test {
         rule_type = "regex"
 
         [[routes]]
-        to = "freedom"
+        to = "direct"
         rule = "*"
         rule_type = "wildcard"
         "#;
@@ -286,7 +286,7 @@ mod test {
                 RouteConfig::new("*.google.com", "ethan", RuleType::Domain),
                 RouteConfig::new("192.168.100.*", "ethan", RuleType::Ipv4),
                 RouteConfig::new("^github\\.$", "ethan", RuleType::Regex),
-                RouteConfig::new("*", "freedom", RuleType::Wildcard),
+                RouteConfig::new("*", "direct", RuleType::Wildcard),
             ])
         );
 

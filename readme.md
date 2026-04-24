@@ -5,9 +5,9 @@
 项目通过不同的 Inbound 和 Outbound 组合，实现以下两类典型部署：
 
 1. 客户端模式：Socks5 入站 + Ethan 出站
-2. 服务端模式：Ethan 入站 + Freedom 出站
+2. 服务端模式：Ethan 入站 + Direct 出站
 
-其中 Ethan 是项目内自定义的传输协议，可选 TLS 封装；Freedom 表示直连目标地址。
+其中 Ethan 是项目内自定义的传输协议，可选 TLS Direct 表示直连目标地址。
 
 ## 1. 项目目标与能力
 
@@ -22,7 +22,7 @@
 
 1. Socks5 入站（Connect）。
 2. Ethan 入站/出站（带简单鉴权 uid/pwd）。
-3. Freedom 出站（直接连接目标）。
+3. Direct 出站（直接连接目标）。
 4. 可选 TLS（客户端到服务端链路）。
 5. 日志输出到 stdout 和文件。
 6. 路由规则分流（domain/ip，正则匹配）。
@@ -37,11 +37,11 @@
 
 2. Outbound
 - ethan：连接远端 Ethan 服务。
-- freedom：直接连接目标地址。
+- Direct：直接连接目标地址。
 
 3. 工厂
 - InBoundFactory：根据配置生成 socks5 或 ethan 入站。
-- OutBoundFactory：根据配置生成 ethan 或 freedom 出站。
+- OutBoundFactory：根据配置生成 ethan 或 Direct 出站。
 
 4. 配置
 - 启动时读取 TOML/JSON 配置并构建 APP_CONFIG。
@@ -51,8 +51,8 @@
 
 客户端模式（建议）：
 应用 -> Socks5 Inbound -> 规则匹配 ->
-1) 命中：Ethan Outbound -> 服务端 Ethan Inbound -> Freedom Outbound -> 目标站
-2) 不命中：Freedom Outbound -> 目标站
+1) 命中：Ethan Outbound -> 服务端 Ethan Inbound -> Direct Outbound -> 目标站
+2) 不命中：Direct Outbound -> 目标站
 
 ## 3. 构建与运行
 
@@ -134,12 +134,12 @@ server = ["8.8.8.8"]
 
 [route]
 # 命中正则规则 -> 走远端 Ethan
-# 未命中 -> 本地 Freedom 直连
+# 未命中 -> 本地 Direct 直连
 domain = ["(^|\\.)google\\.com$", "^github\\.com$"]
 ip = ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$", "^2001:db8:.*"]
 ```
 
-### 4.3 服务端配置示例（Ethan + Freedom）
+### 4.3 服务端配置示例（Ethan + Direct）
 
 ```toml
 [log]
@@ -159,7 +159,7 @@ key_path = "examples/certs/privkey.pem"
 domain_name = "localhost"
 
 [outbound]
-protocol = "freedom"
+protocol = "Direct"
 ```
 
 ### 4.4 客户端 JSON 配置示例（Socks5 + Ethan）
@@ -287,7 +287,7 @@ src/
   factory/             # Inbound/Outbound 工厂
   socks/               # Socks5 协议与入站实现
   ethan/               # Ethan 协议与入/出站
-  freedom.rs           # 直连出站
+  Direct.rs           # 直连出站
   dns_resolver.rs      # DNS 解析工具
   main.rs              # 程序入口
 examples/config/

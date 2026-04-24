@@ -2,7 +2,7 @@ pub mod app_config;
 pub mod dns_resolver;
 pub mod ethan;
 pub mod factory;
-pub mod freedom;
+pub mod direct;
 pub mod socks;
 pub mod start_args;
 pub mod traits;

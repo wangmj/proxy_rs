@@ -11,7 +11,7 @@ use serde::Deserialize;
 #[serde(tag = "protocol", rename_all = "lowercase")]
 pub enum OutBoundTypeConfig {
     Ethan(EthanOutBoundConfig),
-    Freedom(FreedomOutputConfig),
+    Direct(DirectOutputConfig),
 }
 
 impl OutBoundTypeConfig {
@@ -20,7 +20,7 @@ impl OutBoundTypeConfig {
             OutBoundTypeConfig::Ethan(ethan_out_bound_config) => ethan_out_bound_config
                 .name
                 .eq_ignore_ascii_case(name.as_ref()),
-            OutBoundTypeConfig::Freedom(freedom_output_config) => freedom_output_config
+            OutBoundTypeConfig::Direct(direct_output_config) => direct_output_config
                 .name
                 .eq_ignore_ascii_case(name.as_ref()),
         }
@@ -84,10 +84,10 @@ impl EthanOutBoundConfig {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]
-pub struct FreedomOutputConfig {
+pub struct DirectOutputConfig {
     name: String,
 }
-impl FreedomOutputConfig {
+impl DirectOutputConfig {
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
@@ -139,16 +139,16 @@ mod test {
         Ok(())
     }
     #[test]
-    fn outbound_freedom_config_parse_test() -> Result<(), Box<dyn std::error::Error>> {
+    fn outbound_direct_config_parse_test() -> Result<(), Box<dyn std::error::Error>> {
         let outbound_config: OutBoundTypeConfig = toml::from_str(
-            r#"name="freedom"
-            protocol="freedom""#,
+            r#"name="direct"
+            protocol="direct""#,
         )?;
-        if let OutBoundTypeConfig::Freedom(freedom) = outbound_config {
-            assert_eq!(freedom.name, "freedom");
+        if let OutBoundTypeConfig::Direct(direct) = outbound_config {
+            assert_eq!(direct.name, "direct");
             Ok(())
         } else {
-            Err("outbound config is freedom config".into())
+            Err("outbound config is direct config".into())
         }
     }
 }

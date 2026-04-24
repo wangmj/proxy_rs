@@ -1,13 +1,13 @@
 use std::{ sync::Arc};
 
 use crate::{
-    OutBoundTypeConfig, ethan::ethan_outbound::EthanOutBound, freedom::Freedom,
+    OutBoundTypeConfig, ethan::ethan_outbound::EthanOutBound, direct::Direct,
     traits::proxy_outbound::OutBoundProxy,
 };
 
 pub enum OutBoundType {
     Ethan,
-    Freedom,
+    Direct,
 }
 pub struct OutBoundFactory;
 impl OutBoundFactory {
@@ -18,7 +18,7 @@ impl OutBoundFactory {
                 let ethan = EthanOutBound::new(config);
                 Box::new(ethan) as Box<dyn OutBoundProxy>
             }
-            OutBoundTypeConfig::Freedom(_freedom_output_config) => Box::new(Freedom),
+            OutBoundTypeConfig::Direct(_) => Box::new(Direct),
         }
     }
 }

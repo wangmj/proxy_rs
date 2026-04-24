@@ -23,8 +23,8 @@ domain_name = "dev.ubuntu"
 crt_path = "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
 
 [[outbounds]]
-to = "freedom"
-protocol = "freedom"
+to = "direct"
+protocol = "direct"
 
 [[routes]]
 to = "ethan"

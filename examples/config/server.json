@@ -22,13 +22,13 @@
   },
   "outbound": [
     {
-      "protocol": "freedom",
-      "name": "freedom"
+      "protocol": "direct",
+      "name": "direct"
     }
   ],
   "routes": [
     {
-      "to": "freedom",
+      "to": "direct",
       "rule": "*",
       "rule_type":"rule_type"
     }
