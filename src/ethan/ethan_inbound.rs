@@ -128,13 +128,13 @@ impl EthanInBoundConnector {
         match output_bound.connect_server(request).await {
             Ok(out_stream) => {
                 let response = EthanResponse::new(true, None);
-                let bytes = response.to_response_bytes();
+                let bytes = response.into_response_bytes();
                 self.stream.write_all(&bytes).await?;
                 Ok(out_stream)
             }
             Err(err) => {
                 let response = EthanResponse::new(false, Some(err.to_string()));
-                let bytes = response.to_response_bytes();
+                let bytes = response.into_response_bytes();
                 self.stream.write_all(&bytes).await?;
                 Err(err)
             }
@@ -182,9 +182,9 @@ fn expand_path(path: &Path) -> PathBuf {
             }
             return expanded;
         }
-    } else if raw.starts_with("./") {
+    } else if let Some(stripped) = raw.strip_prefix("./") {
         let mut currentdir = env::current_dir().expect("get current dir failed!");
-        currentdir.push(&raw[2..]);
+        currentdir.push(stripped);
         return currentdir;
     }
     path.to_path_buf()
@@ -236,6 +236,4 @@ mod test {
         assert!(final_path.display().to_string().chars().count() > "/file.json".chars().count());
         println!("{}", final_path.display());
     }
-
-   
 }

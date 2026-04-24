@@ -3,7 +3,6 @@ use super::outbound_config::*;
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
-use serde::{Deserialize, Deserializer};
 use std::{env, path::Path, sync::LazyLock};
 
 use crate::log_config::LogConfig;
@@ -76,12 +75,11 @@ impl AppConfig {
         }
         let target_dst_type = connect_request.dst_type();
         let route = self.routes().get_match(target_dst_type);
-        return self
-            .outbounds()
+        self.outbounds()
             .iter()
-            .find(|x| x.eq_name_ignore_case(route.proxy_name()))
+            .find(|x| x.eq_name_ignore_case(route.to()))
             .cloned()
-            .ok_or_else(|| anyhow!(format!("根据名称:{}没有找到匹配的项", route.proxy_name())));
+            .ok_or_else(|| anyhow!(format!("根据名称:{}没有找到匹配的项", route.to())))
     }
 }
 
@@ -135,22 +133,22 @@ mod test {
         protocol="freedom"
 
         [[routes]]
-        proxy_name = "ethan"
+        to = "ethan"
         rule = "*.google.com"
         rule_type = "domain"
 
         [[routes]]
-        proxy_name = "ethan"
+        to = "ethan"
         rule = "192.168.100.*"
         rule_type = "ipv4"
 
         [[routes]]
-        proxy_name = "ethan"
+        to = "ethan"
         rule = "^github\\.$"
         rule_type = "regex"
 
         [[routes]]
-        proxy_name = "freedom"
+        to = "freedom"
         rule = "*"
         rule_type = "wildcard"
         "##;
@@ -196,7 +194,7 @@ mod test {
                 OutBoundTypeConfig::Freedom(freedom_output_config)
             ]
         );
-        assert_eq!(appconfig.routes().len(),4);
+        assert_eq!(appconfig.routes().len(), 4);
 
         Ok(())
     }
@@ -247,22 +245,22 @@ mod test {
   ],
   "routes": [
     {
-      "proxy_name": "ethan",
+      "to": "ethan",
       "rule": "*.google.com",
       "rule_type": "Domain"
     },
     {
-      "proxy_name": "ethan",
+      "to": "ethan",
       "rule": "192.168.100.*",
       "rule_type": "Ipv4"
     },
     {
-      "proxy_name": "ethan",
+      "to": "ethan",
       "rule": "^github\\.$",
       "rule_type": "Regex"
     },
     {
-      "proxy_name": "freedom",
+      "to": "freedom",
       "rule": "*",
       "rule_type": "Wildcard"
     }

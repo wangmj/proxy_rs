@@ -22,44 +22,44 @@ impl RouteManager {
         if !self.0.iter().any(|x| x.rule_type() == &RuleType::Wildcard) {
             self.0.push(RouteConfig {
                 rule: "".into(),
-                proxy_name: "default_wild_pattern".into(),
+                to: "default_wild_pattern".into(),
                 rule_type: RuleType::Wildcard,
             });
         }
     }
 
     pub(crate) fn get_match(&self, dst: &DstType) -> &RouteConfig {
-        let proxy_name;
+        let to_proxy=
         match dst {
             DstType::Ipv4(ipv4_addr) => {
-                proxy_name = self
+                self
                     .0
                     .iter()
                     .filter(|x| {
                         x.rule_type() == &RuleType::Ipv4 || x.rule_type() == &RuleType::Regex
                     })
-                    .find(|&x| x.is_match(ipv4_addr.to_string()));
+                    .find(|&x| x.is_match(ipv4_addr.to_string()))
             }
             DstType::Ipv6(ipv6_addr) => {
-                proxy_name = self
+                self
                     .0
                     .iter()
                     .filter(|x| {
                         x.rule_type() == &RuleType::Ipv6 || x.rule_type() == &RuleType::Regex
                     })
-                    .find(|&x| x.is_match(ipv6_addr.to_string()));
+                    .find(|&x| x.is_match(ipv6_addr.to_string()))
             }
             DstType::DomainName(name) => {
-                proxy_name = self
+                self
                     .0
                     .iter()
                     .filter(|x| {
                         x.rule_type() == &RuleType::Domain || x.rule_type() == &RuleType::Regex
                     })
-                    .find(|x| x.is_match(name));
+                    .find(|x| x.is_match(name))
             }
-        }
-        match proxy_name {
+        };
+        match to_proxy {
             Some(rc) => rc,
             None => self
                 .0
@@ -90,7 +90,7 @@ pub struct RouteConfig {
     #[serde(default)]
     rule: String,
     #[serde(default)]
-    proxy_name: String,
+    to: String,
     rule_type: RuleType,
 }
 #[derive(Debug, PartialEq, Eq, DeserializeFromStr)]
@@ -105,17 +105,17 @@ pub enum RuleType {
 impl RouteConfig {
     pub fn new(
         rule: impl Into<String>,
-        proxy_name: impl Into<String>,
+        to: impl Into<String>,
         route_type: RuleType,
     ) -> Self {
         Self {
             rule: rule.into(),
-            proxy_name: proxy_name.into(),
+            to: to.into(),
             rule_type: route_type,
         }
     }
-    pub fn proxy_name(&self) -> &str {
-        &self.proxy_name
+    pub fn to(&self) -> &str {
+        &self.to
     }
     pub fn rule_type(&self) -> &RuleType {
         &self.rule_type
@@ -234,41 +234,41 @@ mod test {
 
         let goole_dst = DstType::DomainName("www.google.com".into());
         let goole_dst_match = manager.get_match(&goole_dst);
-        assert_eq!(goole_dst_match.proxy_name(), "proxy_domain");
+        assert_eq!(goole_dst_match.to(), "proxy_domain");
 
         let ipv4_dst = DstType::Ipv4(Ipv4Addr::from_octets([192u8, 168, 5, 100]));
         let ipv4_dst_match = manager.get_match(&ipv4_dst);
-        assert_eq!(ipv4_dst_match.proxy_name(), "proxy_ipv4");
+        assert_eq!(ipv4_dst_match.to(), "proxy_ipv4");
 
         let github_dst = DstType::DomainName("github.com".into());
         let github_dst_match = manager.get_match(&github_dst);
-        assert_eq!(github_dst_match.proxy_name(), "proxy_regex");
+        assert_eq!(github_dst_match.to(), "proxy_regex");
 
         let bing_dst = DstType::DomainName("cn.bing.com".into());
         let bing_dst_match = manager.get_match(&bing_dst);
-        assert_eq!(bing_dst_match.proxy_name(), "direct");
+        assert_eq!(bing_dst_match.to(), "direct");
     }
 
     #[test]
     fn toml_parse_test() -> Result<()> {
         let content = r#"
         [[routes]]
-        proxy_name = "ethan"
+        to = "ethan"
         rule = "*.google.com"
         rule_type = "domain"
 
         [[routes]]
-        proxy_name = "ethan"
+        to = "ethan"
         rule = "192.168.100.*"
         rule_type = "ipv4"
 
         [[routes]]
-        proxy_name = "ethan"
+        to = "ethan"
         rule = "^github\\.$"
         rule_type = "regex"
 
         [[routes]]
-        proxy_name = "freedom"
+        to = "freedom"
         rule = "*"
         rule_type = "wildcard"
         "#;

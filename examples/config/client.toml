@@ -23,10 +23,10 @@ domain_name = "dev.ubuntu"
 crt_path = "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
 
 [[outbounds]]
-name = "freedom"
+to = "freedom"
 protocol = "freedom"
 
 [[routes]]
-proxy_name = "ethan"
+to = "ethan"
 rule = "*"
 rule_type = "wildcard"

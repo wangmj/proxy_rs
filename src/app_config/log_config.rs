@@ -28,7 +28,7 @@ pub struct AccessLogConfig {
     level: String,
     path: PathBuf,
 }
-#[derive(Debug,  serde::Deserialize)]
-pub struct ErrorLogConfig {
-    path: PathBuf,
-}
+// #[derive(Debug,  serde::Deserialize)]
+// pub struct ErrorLogConfig {
+//     path: PathBuf,
+// }

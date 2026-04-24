@@ -28,7 +28,7 @@
   ],
   "routes": [
     {
-      "proxy_name": "freedom",
+      "to": "freedom",
       "rule": "*",
       "rule_type":"rule_type"
     }

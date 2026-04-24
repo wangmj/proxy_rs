@@ -82,6 +82,7 @@ impl Display for DstType {
     }
 }
 impl ConnectRequest {
+    #[allow(unused)]
     pub fn new(port: u16, t: DstType) -> Self {
         Self {
             dst_port: port,
@@ -211,7 +212,7 @@ impl EthanResponse {
         }
         v
     }
-    pub fn to_response_bytes(self)->Vec<u8>{
+    pub fn into_response_bytes(self)->Vec<u8>{
         let mut bytes= self.as_bytes();
         bytes.insert(0, bytes.len() as u8);
         bytes
