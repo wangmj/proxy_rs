@@ -2,5 +2,6 @@
 /examples/certs
 /log
 /config
+/dist
 .DS_Store
 Cargo.lock

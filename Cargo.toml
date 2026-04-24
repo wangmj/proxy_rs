@@ -1,8 +1,9 @@
 [package]
 name = "proxy_rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 resolver = "2"
+authors = ["wangmj"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -13,9 +14,12 @@ env_logger = "0.11.8"
 fern = "0.7.1"
 hickory-resolver = "0.25.2"
 log = "0.4.29"
+regex = "1.12.2"
 rustls-pemfile = "2.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_with = { version = "3.18.0", features = ["schemars_1"] }
+toml = "0.9.11"
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-rustls = "0.26.4"
-toml = "0.9.11"
 webpki-roots = "1.0.5"

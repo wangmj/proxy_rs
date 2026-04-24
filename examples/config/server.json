@@ -1,0 +1,36 @@
+{
+  "log": {
+    "access": {
+      "level": "info",
+      "path": "log/server_access.log"
+    },
+    "error": {
+      "path": "/var/log/rx_proxy/error.log"
+    }
+  },
+  "inbound": {
+    "protocol": "ethan",
+    "port": 10800,
+    "uid": "ethan.wang",
+    "pwd": "pass01!",
+    "tls": {
+      "use_tls": true,
+      "crt_path": "./server.dev.ubuntu.crt",
+      "key_path": "./server.dev.ubuntu.key",
+      "domain_name": "dev.ubuntu"
+    }
+  },
+  "outbound": [
+    {
+      "protocol": "direct",
+      "name": "direct"
+    }
+  ],
+  "routes": [
+    {
+      "to": "direct",
+      "rule": "*",
+      "rule_type":"rule_type"
+    }
+  ]
+}

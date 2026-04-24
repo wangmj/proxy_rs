@@ -1,17 +1,16 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 
+use crate::{dns_resolver, ethan::ethan_proto::DstType};
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::RwLock,
-    task::JoinHandle,
 };
 
 use crate::{
-    APP_CONFIG, SocksInBoundConfig,
+    APP_CONFIG, DNSResolver, SocksInBoundConfig,
     ethan::ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
     socks::socks5_proto::{
@@ -20,47 +19,15 @@ use crate::{
     },
     traits::proxy_inbound::InBoundProxy,
 };
+
+///socks代理入口
 pub struct Socks5InBound {
     config: Arc<SocksInBoundConfig>,
-    handlers: Arc<RwLock<Vec<JoinHandle<()>>>>,
-    clean_interval_sec: usize,
 }
 
 impl Socks5InBound {
-    fn clean(&self) {
-        let handlers = self.handlers.clone();
-        let sleep_sec = self.clean_interval_sec as u64;
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(sleep_sec)).await;
-                //先将已经完成的收集起来
-                let had_finished: Vec<_> = handlers
-                    .read()
-                    .await
-                    .iter()
-                    .enumerate()
-                    .filter(|(_i, t)| t.is_finished())
-                    .map(|(i, _)| i)
-                    .collect();
-
-                //如果已经完成的不为空，则循环删除。先判断一下，以防止不必要获取读指针。
-                if !had_finished.is_empty() {
-                    let mut write_handler = handlers.write().await;
-                    had_finished.iter().rev().for_each(|i| {
-                        write_handler.remove(*i);
-                    });
-                }
-            }
-        });
-    }
     pub fn new(config: Arc<SocksInBoundConfig>) -> Self {
-        let s = Self {
-            config,
-            handlers: Arc::new(RwLock::new(Vec::new())),
-            clean_interval_sec: 10,
-        };
-        s.clean();
-        s
+        Self { config }
     }
 }
 
@@ -77,37 +44,31 @@ impl InBoundProxy for Socks5InBound {
                 .local_addr()
                 .expect("failed get local addr on socks5")
         );
-        let uid = Arc::new(self.config.uid().map(|x| x.to_string()));
-        let pwd = Arc::new(self.config.pwd().map(|x| x.to_string()));
         loop {
-            let uid = uid.clone();
-            let pwd = pwd.clone();
+            let config = self.config.clone();
             if let Ok((stream, addr)) = listener.accept().await {
                 log::info!("received stream from addr:{}", &addr);
-                let t = tokio::spawn(async move {
-                    match handlestream(stream, uid, pwd).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            log::error!("there is an error when handle stream, {}", err);
-                        }
+                tokio::spawn(async move {
+                    if let Err(err) = handlestream(stream, config).await {
+                        log::error!("handle stream failed, inner error: {}", err);
                     }
                 });
-                self.handlers.write().await.push(t);
             }
         }
-
-        // Ok(())
     }
 }
 
-async fn handlestream(
-    mut stream: TcpStream,
-    uid: Arc<Option<String>>,
-    pwd: Arc<Option<String>>,
-) -> Result<()> {
-    auth_handle(&mut stream, uid, pwd).await?;
+async fn handlestream(mut stream: TcpStream, config: Arc<SocksInBoundConfig>) -> Result<()> {
+    let uid = Arc::new(config.uid().map(|x| x.to_string()));
+    let pwd = Arc::new(config.pwd().map(|x| x.to_string()));
 
-    bind_remote(&mut stream).await?;
+    if let Err(err) = auth_handle(&mut stream, uid, pwd).await {
+        return Err(anyhow!(
+            "there is some error when process auth, inner error: {err}"
+        ));
+    }
+
+    bind_remote(&mut stream, config).await?;
     Ok(())
 }
 
@@ -126,18 +87,16 @@ async fn auth_handle(
     _uid: Arc<Option<String>>,
     _pwd: Arc<Option<String>>,
 ) -> Result<()> {
-    valid_socks_ver(stream).await?;
     log::trace!("start auth");
+    valid_socks_ver(stream).await?;
     let method_lens = stream.read_u8().await? as usize;
     let mut buff = vec![0u8; method_lens];
-    let _n = stream.read_exact(&mut buff).await?;
-    if !_n.eq(&method_lens) {
-        let msg = format!(
+    let n = stream.read_exact(&mut buff).await?;
+    if !n.eq(&method_lens) {
+        return Err(anyhow!(format!(
             "received client support method failed! received lens:{} not eq defined lens:{}",
-            _n, method_lens
-        );
-        log::error!("{}", msg);
-        return Err(anyhow!(msg));
+            n, method_lens
+        )));
     }
     let auth_methods_from_client: Vec<_> = buff.iter().map(AuthMethod::from).collect();
     log::trace!(
@@ -147,63 +106,88 @@ async fn auth_handle(
     let mut both_supported_authmethods =
         find_both_support_auth_method(&auth_methods_from_client, &SERVER_SUPPORTED_AUTHS);
     both_supported_authmethods.sort();
-    let first_supported_am = both_supported_authmethods.first();
-    let am = match first_supported_am {
+    let support_auth = match both_supported_authmethods.first() {
         Some(am) => *am,
         None => {
             let msg = format!(
                 "There is no method with server and client all support,client supported methods:{:?}, server support methods:{:?}",
                 auth_methods_from_client, SERVER_SUPPORTED_AUTHS
             );
-            log::error!("{}", msg);
             return Err(anyhow!(msg));
         }
     };
-    log::trace!("final authmethod:{:?}", &am);
-    stream.write_all(&[SOCKS_VERSION, am.into()]).await?;
+    log::trace!("final authmethod:{:?}", &support_auth);
+    stream
+        .write_all(&[SOCKS_VERSION, support_auth.into()])
+        .await?;
 
-    if am.eq(&AuthMethod::NoAuth) {
+    if support_auth.eq(&AuthMethod::NoAuth) {
         Ok(())
     } else {
         todo!("socks5支持其他认证方法")
     }
 }
 
-async fn bind_remote(stream: &mut TcpStream) -> Result<()> {
+async fn bind_remote(stream: &mut TcpStream, config: Arc<SocksInBoundConfig>) -> Result<()> {
     valid_socks_ver(stream).await?;
 
     let mut response_builder = SocksResponse::builder();
 
-    let cmd_buf = stream.read_u8().await?;
-    let cmd = match Cmd::try_from(cmd_buf) {
+    let cmd_byte = stream.read_u8().await?;
+    let cmd = match Cmd::try_from(cmd_byte) {
         Ok(cmd) => cmd,
         Err(e) => return Err(e),
     };
     log::trace!("the client cmd is: {:?}", cmd);
+    //读取rsv，该位没用
     let _rsv = stream.read_u8().await?;
-    let (atyp, address, port) = read_address(stream).await?;
-    log::trace!(
-        "read address success, atyp:{:?},address:{},port:{}",
-        atyp,
-        String::from_utf8_lossy(&address),
-        port
-    );
+    let mut connect_request = read_address(stream).await?;
+    log::trace!("read address success, {}", connect_request);
+
     response_builder
-        .atyp(atyp)
-        .dst_addr(address.clone())
-        .dst_port(port);
+        .atyp(connect_request.dst_as_atp())
+        .dst_addr(connect_request.addr())
+        .dst_port(connect_request.port());
 
     match cmd {
         Cmd::Connect => {
-            let outbound = OutBoundFactory::get(APP_CONFIG.outbound());
-            let connect_request = ConnectRequest::try_from((atyp, address.as_slice(), port))?;
-            let mut outbound_stream = outbound.connect_server(connect_request).await?;
-            response_builder.rep(SocksResponseType::Success);
-            let response = response_builder.build();
-            let response = response.to_bytes();
-            stream.write_all(&response).await?;
-            stream.flush().await?;
-            transfer_data(stream, &mut outbound_stream).await;
+            if SocksAddressType::Domain == connect_request.dst_as_atp()
+                && let DNSResolver::Local = config.dns().resolver
+            {
+                let addr = connect_request.addr();
+                let ds = String::from_utf8_lossy(&addr);
+                let ips = dns_resolver::resolve_dns(&ds).await?;
+                let ip = dns_resolver::pick_fastet_ipadd(&ips, connect_request.port())
+                    .await
+                    .ok_or_else(|| anyhow!(format!("can't resolve dns:{} to ip", ds)))?;
+                match ip {
+                    std::net::IpAddr::V4(ipv4_addr) => {
+                        connect_request.set_dst_type(DstType::Ipv4(ipv4_addr));
+                    }
+                    std::net::IpAddr::V6(ipv6_addr) => {
+                        connect_request.set_dst_type(DstType::Ipv6(ipv6_addr))
+                    }
+                }
+            }
+            let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request)?;
+
+            match OutBoundFactory::get(&outbound_config)
+                .connect_server(connect_request)
+                .await
+            {
+                Ok(mut outbound_stream) => {
+                    response_builder.rep(SocksResponseType::Success);
+                    let response = response_builder.build();
+                    let response = response.to_bytes();
+                    stream.write_all(&response).await?;
+                    stream.flush().await?;
+                    transfer_data(stream, &mut outbound_stream).await;
+                }
+                Err(err) => {
+                    log::error!("Outbound connect remote server failed. {}", err);
+                    response_builder.rep(SocksResponseType::ConnectReject);
+                }
+            }
         }
         Cmd::Bind => todo!(),
         Cmd::Udp => todo!(),
@@ -226,6 +210,7 @@ where
     }
 }
 
+//todo: 优化该代码，返回借用的值
 fn find_both_support_auth_method(
     client_auth_methods: &[AuthMethod],
     server_auth_methods: &[AuthMethod],
@@ -237,28 +222,30 @@ fn find_both_support_auth_method(
         .collect()
 }
 
-async fn read_address(stream: &mut TcpStream) -> Result<(SocksAddressType, Vec<u8>, u16)> {
+async fn read_address(stream: &mut TcpStream) -> Result<ConnectRequest> {
     let t = stream.read_u8().await?;
     match t {
         0x01 => {
             let mut buf = [0; 4];
             stream.read_exact(&mut buf).await?;
             let port = stream.read_u16().await?;
-            Ok((SocksAddressType::Ipv4, buf.to_vec(), port))
+            ConnectRequest::try_from((SocksAddressType::Ipv4, &buf[..], port))
+            // Ok((SocksAddressType::Ipv4, buf.to_vec(), port))
         }
         0x03 => {
             let len = stream.read_u8().await.expect("get domain length") as usize;
             let mut domain = vec![0; len];
             stream.read_exact(&mut domain).await?;
             let port = stream.read_u16().await?;
-
-            Ok((SocksAddressType::Domain, domain, port))
+            ConnectRequest::try_from((SocksAddressType::Domain, &domain[..], port))
+            // Ok((SocksAddressType::Domain, domain, port))
         }
         0x04 => {
             let mut buf = [0; 16];
             stream.read_exact(&mut buf).await?;
             let port = stream.read_u16().await?;
-            Ok((SocksAddressType::Ipv6, buf.to_vec(), port))
+            ConnectRequest::try_from((SocksAddressType::Ipv6, &buf[..], port))
+            // Ok((SocksAddressType::Ipv6, buf.to_vec(), port))
         }
         _ => Err(anyhow!(format!("unkonw atyp: {}", t))),
     }

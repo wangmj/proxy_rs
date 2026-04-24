@@ -1,5 +1,7 @@
 pub mod config;
 mod inbound_config;
 mod outbound_config;
-pub use inbound_config::{EthanInBoundConfig,SocksInBoundConfig,InBoundTypeConfig,TlsServerConfig};
-pub use outbound_config::{EthanOutBoundConfig,FreedomOutputConfig,OutputBoundTypeConfig,TlsClientConfig,DnsConfig,DNSResolver};
+pub mod route_config;
+pub mod log_config;
+pub use inbound_config::{EthanInBoundConfig,SocksInBoundConfig,InBoundTypeConfig,TlsServerConfig,DnsConfig,DNSResolver};
+pub use outbound_config::{EthanOutBoundConfig,DirectOutputConfig,OutBoundTypeConfig,TlsClientConfig};

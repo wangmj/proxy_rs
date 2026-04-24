@@ -1,24 +1,32 @@
 [log]
-access.level = "trace"
+access.level = "info"
 access.path = "log/access.log"
 error.path = "/var/log/rs_proxy/error.log"
 
 [inbound]
 protocol = "socks5"
 port = 1080
+dns.resolver = "local"
+dns.server = ["8.8.8.8"]
 
-[outbound]
+[[outbounds]]
+name = "ethan"
 protocol = "ethan"
 uid = "ethan.wang"
 pwd = "pass01!"
 port = 10800
 addr = "dev.ubuntu"
 
-[outbound.tls]
+[outbounds.tls]
 use_tls = true
 domain_name = "dev.ubuntu"
 crt_path = "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
 
-[outbound.dns]
-resolver = "local"
-server = ["8.8.8.8"]
+[[outbounds]]
+name = "direct"
+protocol = "direct"
+
+[[routes]]
+to = "ethan"
+rule = "*"
+rule_type = "wildcard"
