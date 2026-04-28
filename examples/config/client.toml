@@ -27,6 +27,21 @@ name = "direct"
 protocol = "direct"
 
 [[routes]]
-to = "ethan"
+to = "direct"
+rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+rule_type = "CIDR"
+
+[[routes]]
+to = "direct"
+rule = "CN"
+rule_type = "GeoIP:country"
+
+[[routes]]
+to = "direct"
+rule = "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967"
+rule_type = "GeoIP:asn"
+
+[[routes]]
+to = "proxy"
 rule = "*"
-rule_type = "wildcard"
+rule_type = "default"

@@ -98,7 +98,10 @@ mod test {
 
     use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
 
-    use crate::{ethan::ethan_proto::DstType, route_config::RouteConfig};
+    use crate::{
+        ethan::ethan_proto::DstType,
+        route_config::{RouteConfig, RuleType},
+    };
 
     use super::*;
     use anyhow::Result;
@@ -116,7 +119,7 @@ mod test {
         server=["8.8.8.8"]
 
         [[outbounds]]
-        name="ethan"
+        name="proxy"
         protocol = "ethan"
         uid = "u"
         pwd = "p"
@@ -133,24 +136,24 @@ mod test {
         protocol="direct"
 
         [[routes]]
-        to = "ethan"
-        rule = "*.google.com"
-        rule_type = "domain"
-
-        [[routes]]
-        to = "ethan"
-        rule = "192.168.100.*"
-        rule_type = "ipv4"
-
-        [[routes]]
-        to = "ethan"
-        rule = "^github\\.$"
-        rule_type = "regex"
+        to = "direct"
+        rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+        rule_type = "CIDR"
 
         [[routes]]
         to = "direct"
+        rule = "CN"
+        rule_type = "GeoIP:country"
+
+        [[routes]]
+        to = "direct"
+        rule = "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967"
+        rule_type = "GeoIP:asn"
+
+        [[routes]]
+        to = "proxy"
         rule = "*"
-        rule_type = "wildcard"
+        rule_type = "default"
         "##;
 
     #[test]
@@ -175,7 +178,7 @@ mod test {
         );
 
         let ethan_output_config = EthanOutBoundConfig::new(
-            "ethan".into(),
+            "proxy".into(),
             "127.0.0.1".into(),
             10800,
             "u".into(),
@@ -220,7 +223,7 @@ mod test {
   },
   "outbounds": [
     {
-      "name": "ethan",
+      "name": "proxy",
       "protocol": "ethan",
       "uid": "u",
       "pwd": "p",
@@ -244,25 +247,25 @@ mod test {
     }
   ],
   "routes": [
-    {
-      "to": "ethan",
-      "rule": "*.google.com",
-      "rule_type": "Domain"
-    },
-    {
-      "to": "ethan",
-      "rule": "192.168.100.*",
-      "rule_type": "Ipv4"
-    },
-    {
-      "to": "ethan",
-      "rule": "^github\\.$",
-      "rule_type": "Regex"
+     {
+      "to": "direct",
+      "rule": "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
+      "rule_type": "CIDR"
     },
     {
       "to": "direct",
-      "rule": "*",
-      "rule_type": "Wildcard"
+      "rule": "CN",
+      "rule_type": "GeoIP:country"
+    },
+    {
+      "to": "direct",
+      "rule": "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+      "rule_type": "GeoIP:asn"
+    },
+    {
+      "to":"proxy",
+      "rule":"*",
+      "rule_type":"default"
     }
   ]
 }"##;
@@ -289,7 +292,7 @@ mod test {
         );
 
         let ethan_output_config = EthanOutBoundConfig::new(
-            "ethan".into(),
+            "proxy".into(),
             "127.0.0.1".into(),
             10800,
             "u".into(),
@@ -314,17 +317,17 @@ mod test {
             appconfig.routes(),
             &RouteManager::new([
                 RouteConfig::new(
-                    "*.google.com",
-                    "ethan",
-                    crate::route_config::RuleType::Domain
+                    "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
+                    "direct",
+                    RuleType::Cidr
                 ),
+                RouteConfig::new("CN", "direct", RuleType::GeoipCountry),
                 RouteConfig::new(
-                    "192.168.100.*",
-                    "ethan",
-                    crate::route_config::RuleType::Ipv4
+                    "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+                    "direct",
+                    RuleType::Geoipasn
                 ),
-                RouteConfig::new("^github\\.$", "ethan", crate::route_config::RuleType::Regex),
-                RouteConfig::new("*", "direct", crate::route_config::RuleType::Wildcard),
+                RouteConfig::new("*", "proxy", RuleType::Default),
             ])
         );
         Ok(())
@@ -333,11 +336,11 @@ mod test {
     #[test]
     fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
-        let direct_outbound_config =
-            OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
+        let direct_outbound_config = OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
 
-        let bing_request = ConnectRequest::new(1090, DstType::DomainName("cn.bing.com".into()));
-        let get_outbound_config = appconfig.get_forward_to_remote(&bing_request)?;
+        let baidu_request = ConnectRequest::new(443, DstType::DomainName("www.baidu.com".into()));
+        let get_outbound_config: OutBoundTypeConfig =
+            appconfig.get_forward_to_remote(&baidu_request)?;
         assert_eq!(get_outbound_config, direct_outbound_config);
 
         let ipv4_request = ConnectRequest::new(
@@ -345,16 +348,15 @@ mod test {
             DstType::Ipv4(Ipv4Addr::from_octets([192, 168, 100, 100])),
         );
         let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request)?;
-        if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
-            assert_eq!(ethan_config.name(), "ethan");
+        if let OutBoundTypeConfig::Direct(_direct) = get_outbound_config {
         } else {
-            return Err(anyhow!("ipv4,should be ethan OutBoundType"));
+            return Err(anyhow!("local ip should be a direct route"));
         }
 
         let domain_request = ConnectRequest::new(443, DstType::DomainName("www.google.com".into()));
         let get_outbound_config = appconfig.get_forward_to_remote(&domain_request)?;
         if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
-            assert_eq!(ethan_config.name(), "ethan");
+            assert_eq!(ethan_config.name(), "proxy");
         } else {
             return Err(anyhow!("google.com .should be ethan OutBoundType"));
         }

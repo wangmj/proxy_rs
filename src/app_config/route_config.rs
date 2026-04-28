@@ -1,16 +1,21 @@
-use regex::Regex;
+use ipnetwork::IpNetwork;
 use serde_with::DeserializeFromStr;
 use std::{
-    net::{Ipv4Addr, Ipv6Addr},
-    str::FromStr,
+    net::IpAddr,
+    ops::Deref,
+    str::{self, FromStr},
+    sync::LazyLock,
 };
 
-use crate::ethan::ethan_proto::DstType;
+use crate::{dns_resolver, ethan::ethan_proto::DstType, geoip_helper};
+
+static DEFAULT_ROUTE_CONFIG: LazyLock<RouteConfig> =
+    LazyLock::new(|| RouteConfig::new("*".to_string(), "Direct", RuleType::Default));
+
 
 #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
 pub struct RouteManager(Vec<RouteConfig>);
-
 impl RouteManager {
     pub fn new(routes: impl IntoIterator<Item = RouteConfig>) -> Self {
         let mut s = Self(routes.into_iter().collect());
@@ -19,53 +24,74 @@ impl RouteManager {
     }
     //归一化，添加必须的*通配符
     fn normalize(&mut self) {
-        if !self.0.iter().any(|x| x.rule_type() == &RuleType::Wildcard) {
-            self.0.push(RouteConfig {
-                rule: "".into(),
-                to: "default_wild_pattern".into(),
-                rule_type: RuleType::Wildcard,
-            });
+        if !self.0.iter().any(|x| x.rule_type() == &RuleType::Default) {
+            self.0.push(DEFAULT_ROUTE_CONFIG.deref().clone());
         }
     }
 
     pub(crate) fn get_match(&self, dst: &DstType) -> &RouteConfig {
-        let to_proxy=
         match dst {
-            DstType::Ipv4(ipv4_addr) => {
-                self
+            DstType::Ipv4(ip) => {
+                let config = self
                     .0
                     .iter()
-                    .filter(|x| {
-                        x.rule_type() == &RuleType::Ipv4 || x.rule_type() == &RuleType::Regex
+                    .filter(|&x| {
+                        x.rule_type() == &RuleType::Cidr
+                            || x.rule_type() == &RuleType::GeoipCountry
+                            || x.rule_type() == &RuleType::Geoipasn
                     })
-                    .find(|&x| x.is_match(ipv4_addr.to_string()))
+                    .find(|x| x.is_match(ip.to_string()));
+                
+                match config {
+                    Some(config) => config,
+                    None => self
+                        .0
+                        .iter()
+                        .find(|&x| x.rule_type() == &RuleType::Default)
+                        .unwrap_or_else(|| &DEFAULT_ROUTE_CONFIG),
+                }
             }
-            DstType::Ipv6(ipv6_addr) => {
-                self
+            DstType::Ipv6(ip) => {
+                let config = self
                     .0
                     .iter()
-                    .filter(|x| {
-                        x.rule_type() == &RuleType::Ipv6 || x.rule_type() == &RuleType::Regex
+                    .filter(|&x| {
+                        x.rule_type() == &RuleType::Cidr
+                            || x.rule_type() == &RuleType::GeoipCountry
+                            || x.rule_type() == &RuleType::Geoipasn
                     })
-                    .find(|&x| x.is_match(ipv6_addr.to_string()))
+                    .find(|x| x.is_match(ip.to_string()));
+                match config {
+                    Some(config) => config,
+                    None => self
+                        .0
+                        .iter()
+                        .find(|&x| x.rule_type() == &RuleType::Default)
+                        .unwrap_or_else(|| DEFAULT_ROUTE_CONFIG.deref()),
+                }
             }
+
             DstType::DomainName(name) => {
-                self
+                let config = self
                     .0
                     .iter()
-                    .filter(|x| {
-                        x.rule_type() == &RuleType::Domain || x.rule_type() == &RuleType::Regex
-                    })
-                    .find(|x| x.is_match(name))
+                    .filter(|&x| *x.rule_type() == RuleType::Domain)
+                    .find(|&x| x.is_match(name));
+                //如果没匹配，则解析该name对应的ip地址，再次进行匹配
+                match config {
+                    Some(config) => config,
+                    None => match dns_resolver::resolve_dns_pick_fastet(name) {
+                        Ok(ip) => match ip {
+                            IpAddr::V4(ipv4_addr) => self.get_match(&DstType::Ipv4(ipv4_addr)),
+                            IpAddr::V6(ipv6_addr) => self.get_match(&DstType::Ipv6(ipv6_addr)),
+                        },
+                        Err(err) => {
+                            log::warn!("在本地解析域名时失败，将直接转发direct,err:{err}");
+                            DEFAULT_ROUTE_CONFIG.deref()
+                        }
+                    },
+                }
             }
-        };
-        match to_proxy {
-            Some(rc) => rc,
-            None => self
-                .0
-                .iter()
-                .find(|x| x.rule_type() == &RuleType::Wildcard)
-                .unwrap(),
         }
     }
 
@@ -85,7 +111,7 @@ where
         Self::new(value)
     }
 }
-#[derive(Debug, serde::Deserialize, PartialEq, Eq)]
+#[derive(Debug, serde::Deserialize, PartialEq, Eq, Clone)]
 pub struct RouteConfig {
     #[serde(default)]
     rule: String,
@@ -93,21 +119,17 @@ pub struct RouteConfig {
     to: String,
     rule_type: RuleType,
 }
-#[derive(Debug, PartialEq, Eq, DeserializeFromStr)]
+#[derive(Debug, PartialEq, Eq, DeserializeFromStr, Clone)]
 pub enum RuleType {
-    Regex = 0,
-    Wildcard = 1,
-    Domain = 2,
-    Ipv4 = 3,
-    Ipv6 = 4,
+    Cidr,
+    Geoipasn,
+    GeoipCountry,
+    Domain,
+    Default,
 }
 
 impl RouteConfig {
-    pub fn new(
-        rule: impl Into<String>,
-        to: impl Into<String>,
-        route_type: RuleType,
-    ) -> Self {
+    pub fn new(rule: impl Into<String>, to: impl Into<String>, route_type: RuleType) -> Self {
         Self {
             rule: rule.into(),
             to: to.into(),
@@ -123,11 +145,11 @@ impl RouteConfig {
     pub fn is_match(&self, s: impl AsRef<str>) -> bool {
         let s = s.as_ref();
         match self.rule_type {
-            RuleType::Wildcard => true,
-            RuleType::Regex => match_regex(s, &self.rule),
+            RuleType::Default => true,
+            RuleType::Cidr => match_cidr(s, &self.rule),
             RuleType::Domain => match_domain(s, &self.rule),
-            RuleType::Ipv4 => match_ipv4(s, &self.rule),
-            RuleType::Ipv6 => match_ipv6(s, &self.rule),
+            RuleType::GeoipCountry => match_geoip_country(s, &self.rule),
+            RuleType::Geoipasn => match_geo_asn(s, &self.rule),
         }
     }
 }
@@ -138,56 +160,55 @@ impl FromStr for RuleType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "domain" => Ok(Self::Domain),
-            "ipv4" => Ok(Self::Ipv4),
-            "ipv6" => Ok(Self::Ipv6),
-            "regex" => Ok(Self::Regex),
-            "wildcard" => Ok(Self::Wildcard),
+            "cidr" => Ok(Self::Cidr),
+            "geoip:country" | "geoip_country" => Ok(Self::GeoipCountry),
+            "geoip:asn"|"geoip_asn" => Ok(Self::Geoipasn),
+            "default" => Ok(Self::Default),
             _ => Err(format!("无效规则类型: {}", s)),
         }
     }
 }
 
-fn match_regex(target: &str, rule: &str) -> bool {
-    let trimmed = rule.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    match Regex::new(trimmed) {
-        Ok(regex) => regex.is_match(target),
-        Err(err) => {
-            log::warn!("invalid {} regex, error: {}", trimmed, err);
-            false
+fn match_cidr(target: &str, rule: &str) -> bool {
+    match IpAddr::from_str(target) {
+        Ok(ip) => {
+            //不合规的会被跳过
+            rule.split([',', ';'])
+                .map_while(|x| IpNetwork::from_str(x).ok())
+                .any(|x| x.contains(ip))
         }
+        Err(_) => false,
     }
 }
 
-fn match_ipv4(target: &str, rule: &str) -> bool {
-    if let Ok(target_ip) = Ipv4Addr::from_str(target) {
-        let target_vec = target_ip.octets().map(|x| x.to_string());
-        let rule_vec: Vec<_> = rule.split(".").collect();
-        for i in 0..4 {
-            if target_vec[i].ne(rule_vec[i]) && rule_vec[i] != "*" {
-                return false;
+fn match_geoip_country(target: &str, rule: &str) -> bool {
+    match IpAddr::from_str(target) {
+        Ok(ip) => {
+            if let Ok(country) = geoip_helper::get_country(&ip) {
+                let country = country.trim();
+                rule.split([',', ';'])
+                    .map(|x| x.trim())
+                    .any(|x| x.eq_ignore_ascii_case(&country))
+            } else {
+                false
             }
         }
-        true
-    } else {
-        false
+        Err(_) => false,
     }
 }
-fn match_ipv6(target: &str, rule: &str) -> bool {
-    if let Ok(target_ipv6) = Ipv6Addr::from_str(target) {
-        let target_vec = target_ipv6.octets().map(|x| x.to_string());
-        let rule_vec: Vec<_> = rule.trim().split(":").collect();
-        for i in 0..target_vec.len() {
-            if target_vec[i].ne(rule_vec[i]) && rule_vec[i] != "*" {
-                return false;
+
+fn match_geo_asn(target: &str, rule: &str) -> bool {
+    match IpAddr::from_str(target) {
+        Ok(ip) => match geoip_helper::get_asn(&ip) {
+            Ok(asn) => {
+                let asn = asn.trim();
+                rule.split([',', ';'])
+                    .map(|x| x.trim())
+                    .any(|x| x.eq_ignore_ascii_case(asn))
             }
-        }
-        true
-    } else {
-        false
+            Err(_) => false,
+        },
+        Err(_) => false,
     }
 }
 
@@ -202,6 +223,8 @@ fn match_domain(target: &str, rule: &str) -> bool {
 #[cfg(test)]
 mod test {
 
+    use std::net::Ipv4Addr;
+
     use anyhow::Result;
 
     use super::*;
@@ -211,40 +234,43 @@ mod test {
         let mut routes = Vec::new();
         routes.push(RouteConfig::new(
             "*.google.com",
-            "proxy_domain",
+            "proxy_goole",
             RuleType::Domain,
         ));
         routes.push(RouteConfig::new(
-            "192.168.*.*",
-            "proxy_ipv4",
-            RuleType::Ipv4,
+            "192.168.0.0/8",
+            "proxy_cidr",
+            RuleType::Cidr,
         ));
         routes.push(RouteConfig::new(
-            "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
-            "proxy_ipv6",
-            RuleType::Ipv6,
+            "169.254.0.0/16",
+            "proxy_cidr",
+            RuleType::Cidr,
         ));
+
+        routes.push(RouteConfig::new("CN", "direct", RuleType::GeoipCountry));
         routes.push(RouteConfig::new(
-            "^github\\..*$",
-            "proxy_regex",
-            RuleType::Regex,
+            "*.github.com",
+            "proxy_github",
+            RuleType::Domain,
         ));
-        routes.push(RouteConfig::new("*", "direct", RuleType::Wildcard));
+        routes.push(RouteConfig::new("*", "direct", RuleType::Default));
+
         let manager = RouteManager::from(routes);
 
         let goole_dst = DstType::DomainName("www.google.com".into());
         let goole_dst_match = manager.get_match(&goole_dst);
-        assert_eq!(goole_dst_match.to(), "proxy_domain");
+        assert_eq!(goole_dst_match.to(), "proxy_goole");
 
         let ipv4_dst = DstType::Ipv4(Ipv4Addr::from_octets([192u8, 168, 5, 100]));
         let ipv4_dst_match = manager.get_match(&ipv4_dst);
-        assert_eq!(ipv4_dst_match.to(), "proxy_ipv4");
+        assert_eq!(ipv4_dst_match.to(), "proxy_cidr");
 
-        let github_dst = DstType::DomainName("github.com".into());
+        let github_dst = DstType::DomainName("www.github.com".into());
         let github_dst_match = manager.get_match(&github_dst);
-        assert_eq!(github_dst_match.to(), "proxy_regex");
+        assert_eq!(github_dst_match.to(), "proxy_github");
 
-        let bing_dst = DstType::DomainName("cn.bing.com".into());
+        let bing_dst = DstType::DomainName("www.baidu.com".into());
         let bing_dst_match = manager.get_match(&bing_dst);
         assert_eq!(bing_dst_match.to(), "direct");
     }
@@ -252,25 +278,25 @@ mod test {
     #[test]
     fn toml_parse_test() -> Result<()> {
         let content = r#"
-        [[routes]]
-        to = "ethan"
-        rule = "*.google.com"
-        rule_type = "domain"
-
-        [[routes]]
-        to = "ethan"
-        rule = "192.168.100.*"
-        rule_type = "ipv4"
-
-        [[routes]]
-        to = "ethan"
-        rule = "^github\\.$"
-        rule_type = "regex"
+       [[routes]]
+        to = "direct"
+        rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+        rule_type = "CIDR"
 
         [[routes]]
         to = "direct"
+        rule = "CN"
+        rule_type = "GeoIP:country"
+
+        [[routes]]
+        to = "direct"
+        rule = "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967"
+        rule_type = "GeoIP:asn"
+
+        [[routes]]
+        to = "proxy"
         rule = "*"
-        rule_type = "wildcard"
+        rule_type = "default"
         "#;
 
         let value: toml::Value = toml::from_str(content)?;
@@ -283,10 +309,18 @@ mod test {
         assert_eq!(
             manager,
             RouteManager::new([
-                RouteConfig::new("*.google.com", "ethan", RuleType::Domain),
-                RouteConfig::new("192.168.100.*", "ethan", RuleType::Ipv4),
-                RouteConfig::new("^github\\.$", "ethan", RuleType::Regex),
-                RouteConfig::new("*", "direct", RuleType::Wildcard),
+                RouteConfig::new(
+                    "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
+                    "direct",
+                    RuleType::Cidr
+                ),
+                RouteConfig::new("CN", "direct", RuleType::GeoipCountry),
+                RouteConfig::new(
+                    "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+                    "direct",
+                    RuleType::Geoipasn
+                ),
+                RouteConfig::new("*", "proxy", RuleType::Default),
             ])
         );
 
