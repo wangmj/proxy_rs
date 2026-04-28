@@ -10,19 +10,7 @@
   },
   "inbound": {
     "protocol": "socks5",
-    "port": 1080
-  },
-  "outbound": {
-    "protocol": "ethan",
-    "uid": "ethan.wang",
-    "pwd": "pass01!",
-    "port": 10800,
-    "addr": "dev.ubuntu",
-    "tls": {
-      "use_tls": true,
-      "domain_name": "dev.ubuntu",
-      "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
-    },
+    "port": 1080,
     "dns": {
       "resolver": "local",
       "server": [
@@ -30,6 +18,25 @@
       ]
     }
   },
+  "outbounds": [
+    {
+      "name":"proxy",
+      "protocol": "ethan",
+      "uid": "ethan.wang",
+      "pwd": "pass01!",
+      "port": 10800,
+      "addr": "dev.ubuntu",
+      "tls": {
+        "use_tls": true,
+        "domain_name": "dev.ubuntu",
+        "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
+      }
+    },
+    {
+      "protocol": "direct",
+      "name": "direct"
+    }
+  ],
   "routes": [
     {
       "to": "direct",
@@ -47,9 +54,9 @@
       "rule_type": "GeoIP:asn"
     },
     {
-      "to":"proxy",
-      "rule":"*",
-      "rule_type":"wildcast"
+      "to": "proxy",
+      "rule": "*",
+      "rule_type": "default"
     }
   ]
 }

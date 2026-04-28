@@ -19,10 +19,7 @@ fn get_app_config_from_args() -> AppConfig {
             current_dir.join("config.toml")
         }
     };
-    let config_content =
-        std::fs::read_to_string(&config_path).expect("read config content failed!");
-    AppConfig::parse_with_file_type(&config_content, &config_path)
-        .expect("config format is incorrect.")
+    AppConfig::open_readfile(config_path).expect("read config failed!")
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -36,22 +33,27 @@ pub struct AppConfig {
     routes: RouteManager,
 }
 impl AppConfig {
-    pub fn parse_with_file_type(content: &str, config_path: &Path) -> Result<Self> {
+    pub fn open_readfile(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config_path = config_path.as_ref();
         let ext = config_path
             .extension()
             .and_then(|x| x.to_str())
             .map(|x| x.to_ascii_lowercase());
 
+        let config_content: String = std::fs::read_to_string(&config_path)?;
+
         match ext.as_deref() {
-            Some("json") => parse_json(content),
-            Some("toml") => parse_toml(content),
+            Some("json") => parse_json(&config_content),
+            Some("toml") => parse_toml(&config_content),
             // Backward-compatible fallback for files with custom/no extension.
-            _ => parse_toml(content),
+            _ => parse_toml(&config_content),
         }
     }
+
     pub fn inbound(&self) -> &InBoundTypeConfig {
         &self.inbound
     }
+
     pub fn outbounds(&self) -> &[OutBoundTypeConfig] {
         &self.outbounds
     }
@@ -361,5 +363,26 @@ mod test {
             return Err(anyhow!("google.com .should be ethan OutBoundType"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn example_config_load_test() -> Result<()> {
+        let mut base_dir = env::current_dir()?;
+        base_dir.push("examples/config");
+        let client_json_file = base_dir.join("client.json");
+        let client_toml_file = base_dir.join("client.toml");
+        let server_json_file = base_dir.join("server.json");
+        let server_toml_file = base_dir.join("server.toml");
+
+        let _ = AppConfig::open_readfile(client_json_file)?;
+        println!("client json file correct!");
+        let _ = AppConfig::open_readfile(client_toml_file)?;
+        println!("client toml file correct!");
+        let _ = AppConfig::open_readfile(server_json_file)?;
+        println!("server json file correct!");
+        let _ = AppConfig::open_readfile(server_toml_file)?;
+        println!("server json file correct!");
+        Ok(())
+
     }
 }
