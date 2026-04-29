@@ -3,9 +3,9 @@ use std::{
     path::PathBuf,
 };
 
-use crate::dns_resolver::{pick_fastet_ipadd, resolve_dns};
+use crate::dns_resolver::resolve_dns_pick_fastet;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::Deserialize;
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]
 #[serde(tag = "protocol", rename_all = "lowercase")]
@@ -67,18 +67,13 @@ impl EthanOutBoundConfig {
         &self.tls
     }
     pub async fn socket_addr(&self) -> Result<SocketAddr> {
-        let ipaddr: IpAddr;
-        if let Ok(ipv4) = self.addr.parse::<Ipv4Addr>() {
-            ipaddr = ipv4.into();
+        let ipaddr: IpAddr = if let Ok(ipv4) = self.addr.parse::<Ipv4Addr>() {
+            ipv4.into()
         } else if let Ok(ipv6) = self.addr.parse::<Ipv6Addr>() {
-            ipaddr = ipv6.into();
+            ipv6.into()
         } else {
-            let ips = resolve_dns(&self.addr).await?;
-            match pick_fastet_ipadd(&ips, self.port).await {
-                Some(ip) => ipaddr = ip,
-                None => return Err(anyhow!("根据域名：{}未能解析道IP地址", self.addr)),
-            }
-        }
+            resolve_dns_pick_fastet(&self.addr)?
+        };
         Ok(SocketAddr::new(ipaddr, self.port))
     }
 }

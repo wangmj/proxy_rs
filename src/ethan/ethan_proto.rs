@@ -100,15 +100,15 @@ impl ConnectRequest {
     pub fn dst_type(&self) -> &DstType {
         &self.dst_type
     }
-    pub fn dst_as_atp(&self)->SocksAddressType{
+    pub fn dst_as_atp(&self) -> SocksAddressType {
         match self.dst_type() {
             DstType::Ipv4(_) => SocksAddressType::Ipv4,
             DstType::Ipv6(_) => SocksAddressType::Ipv6,
             DstType::DomainName(_) => SocksAddressType::Domain,
         }
     }
-    pub fn addr(&self)->Vec<u8>{
-        match self.dst_type(){
+    pub fn addr(&self) -> Vec<u8> {
+        match self.dst_type() {
             DstType::Ipv4(ipv4_addr) => ipv4_addr.octets().to_vec(),
             DstType::Ipv6(ipv6_addr) => ipv6_addr.octets().to_vec(),
             DstType::DomainName(name) => name.as_bytes().to_vec(),
@@ -116,9 +116,6 @@ impl ConnectRequest {
     }
     pub fn port(&self) -> u16 {
         self.dst_port
-    }
-    pub fn set_dst_type(&mut self, dst: DstType) {
-        self.dst_type = dst;
     }
 }
 impl TryFrom<&[u8]> for ConnectRequest {
@@ -212,8 +209,8 @@ impl EthanResponse {
         }
         v
     }
-    pub fn into_response_bytes(self)->Vec<u8>{
-        let mut bytes= self.as_bytes();
+    pub fn into_response_bytes(self) -> Vec<u8> {
+        let mut bytes = self.as_bytes();
         bytes.insert(0, bytes.len() as u8);
         bytes
     }

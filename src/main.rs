@@ -9,7 +9,7 @@ use proxy_rs::{APP_CONFIG, factory::inbound_factory::InBoundFactory};
 #[tokio::main]
 async fn main() {
     init();
-    let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(),APP_CONFIG.dns().clone()).await;
+    let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(), APP_CONFIG.dns().clone()).await;
     inbound.start().await;
 }
 //整体的初始化
@@ -39,11 +39,10 @@ fn touch_file_if_noexist(p: impl AsRef<Path>) {
             Some(parent) => parent,
             None => panic!("log file path is incorrdct"),
         };
-        if !parent_dir.exists() {
-            match fs::create_dir_all(parent_dir) {
-                Ok(_) => {}
-                Err(err) => panic!("创建目录：{} 失败，原因：{}", parent_dir.display(), err),
-            }
+        if !parent_dir.exists()
+            && let Err(err) = fs::create_dir_all(parent_dir)
+        {
+            panic!("创建目录：{} 失败，原因：{}", parent_dir.display(), err);
         }
         if let Err(err) = fs::File::create(p) {
             panic!("创建文件：{}失败，原因：{}", p.display(), err);

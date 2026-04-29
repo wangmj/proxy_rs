@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use serde::{
-    Deserialize, Deserializer,
+    Deserialize,
 };
 
 #[derive(Debug, serde::Deserialize, PartialEq)]

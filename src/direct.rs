@@ -1,11 +1,11 @@
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use crate::{
-    dns_resolver::{pick_fastet_ipadd, resolve_dns},
+    dns_resolver::resolve_dns_pick_fastet,
     ethan::ethan_proto::{ConnectRequest, DstType},
     traits::{async_read_write::AsyncReadWrite, proxy_outbound::OutBoundProxy},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use tokio::net::TcpStream;
 
@@ -26,16 +26,7 @@ impl OutBoundProxy for Direct {
                 TcpStream::connect(SocketAddrV6::new(*ipv6_addr, port, 0, 0)).await?
             }
             DstType::DomainName(domain_name) => {
-                let addrs = resolve_dns(domain_name).await?;
-                let ipaddr = match pick_fastet_ipadd(&addrs, port).await {
-                    Some(ip) => ip,
-                    None => {
-                        return Err(anyhow!(format!(
-                            "can't resovle domainName:{} with correct ip",
-                            domain_name
-                        )));
-                    }
-                };
+                let ipaddr = resolve_dns_pick_fastet(domain_name)?;
                 TcpStream::connect(SocketAddr::new(ipaddr, port)).await?
             }
         };

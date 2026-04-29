@@ -2,11 +2,9 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 
-use crate::{
-    dns_config::{DNSResolver, DnsConfig},
-    dns_resolver,
-    ethan::ethan_proto::DstType,
-};
+use crate::
+    dns_config::DnsConfig
+;
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -51,12 +49,11 @@ impl InBoundProxy for Socks5InBound {
         );
         loop {
             let config = self.config.clone();
-            let dns_config=self.dns_config.clone();
+            let dns_config = self.dns_config.clone();
             if let Ok((stream, addr)) = listener.accept().await {
                 log::info!("received stream from addr:{}", &addr);
                 tokio::spawn(async move {
-                    let mut handler =
-                        Socks5InBoundHanlder::new(stream, config, dns_config);
+                    let mut handler = Socks5InBoundHanlder::new(stream, config, dns_config);
                     if let Err(err) = handler.handlestream().await {
                         log::error!("handle stream failed, inner error: {}", err);
                     }
@@ -66,6 +63,7 @@ impl InBoundProxy for Socks5InBound {
     }
 }
 
+#[allow(unused)]
 struct Socks5InBoundHanlder {
     stream: TcpStream,
     inbound_config: Arc<SocksInBoundConfig>,
@@ -84,9 +82,11 @@ impl Socks5InBoundHanlder {
             dns_config: dns_conf,
         }
     }
+    #[allow(unused)]
     fn auth_uid(&self) -> Option<&str> {
         self.inbound_config.uid()
     }
+    #[allow(unused)]
     fn auth_pwd(&self) -> Option<&str> {
         self.inbound_config.pwd()
     }
@@ -156,7 +156,7 @@ impl Socks5InBoundHanlder {
         log::trace!("the client cmd is: {:?}", cmd);
         //读取rsv，该位没用
         let _rsv = self.stream.read_u8().await?;
-        let mut connect_request = read_address(&mut self.stream).await?;
+        let connect_request = read_address(&mut self.stream).await?;
         log::trace!("read address success, {}", connect_request);
 
         response_builder
@@ -166,24 +166,7 @@ impl Socks5InBoundHanlder {
 
         match cmd {
             Cmd::Connect => {
-                if SocksAddressType::Domain == connect_request.dst_as_atp()
-                    && let DNSResolver::Local = self.dns_config.resolver
-                {
-                    let addr = connect_request.addr();
-                    let ds = String::from_utf8_lossy(&addr);
-                    let ips = dns_resolver::resolve_dns(&ds).await?;
-                    let ip = dns_resolver::pick_fastet_ipadd(&ips, connect_request.port())
-                        .await
-                        .ok_or_else(|| anyhow!(format!("can't resolve dns:{} to ip", ds)))?;
-                    match ip {
-                        std::net::IpAddr::V4(ipv4_addr) => {
-                            connect_request.set_dst_type(DstType::Ipv4(ipv4_addr));
-                        }
-                        std::net::IpAddr::V6(ipv6_addr) => {
-                            connect_request.set_dst_type(DstType::Ipv6(ipv6_addr))
-                        }
-                    }
-                }
+                //检查是否在本地解析域名的规则放在了get_forward_to_remote方法内
                 let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request)?;
 
                 match OutBoundFactory::get(&outbound_config)

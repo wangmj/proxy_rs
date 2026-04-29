@@ -1,7 +1,19 @@
 use anyhow::{Result, anyhow};
-use hickory_resolver::Resolver;
-use std::{net::IpAddr, time::Duration};
+use hickory_resolver::{
+    Resolver,
+    config::{NameServerConfig, ResolverConfig},
+    name_server::{GenericConnector, TokioConnectionProvider},
+    proto::{runtime::TokioRuntimeProvider, xfer::Protocol},
+};
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+    sync::LazyLock,
+    time::Duration,
+};
 use tokio::net::TcpStream;
+
+use crate::APP_CONFIG;
 
 pub(crate) fn resolve_dns_pick_fastet(domain_name: impl AsRef<str>) -> Result<IpAddr> {
     let f = async {
@@ -13,8 +25,46 @@ pub(crate) fn resolve_dns_pick_fastet(domain_name: impl AsRef<str>) -> Result<Ip
             Err(err) => Err(anyhow!("{err}")),
         }
     };
-    let runtime = tokio::runtime::Runtime::new()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
     runtime.block_on(f)
+}
+
+static DNS_RESOVLER: LazyLock<Resolver<GenericConnector<TokioRuntimeProvider>>> =
+    LazyLock::new(get_dns_resolver);
+
+fn get_dns_resolver() -> Resolver<GenericConnector<TokioRuntimeProvider>> {
+    match &APP_CONFIG.dns().server {
+        Some(ss) if !ss.is_empty() => {
+            let mut resolver_config = ResolverConfig::new();
+
+            ss.iter()
+                .map_while(|item| {
+                    if item.contains(":") {
+                        SocketAddr::from_str(format!("{item}:53").as_str()).ok()
+                    } else {
+                        SocketAddr::from_str(item).ok()
+                    }
+                })
+                .for_each(|item| {
+                    let tmp = NameServerConfig::new(item, Protocol::Udp);
+                    resolver_config.add_name_server(tmp);
+                });
+            if !resolver_config.name_servers().is_empty() {
+                Resolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
+                    .build()
+            } else {
+                log::error!(
+                    r#"因配置的dns 服务器 格式不正确，无法使用，转而使用系统的，正确格式例子:["8.8.8.8:53","8.8.8.8"]"#
+                );
+                Resolver::builder_tokio()
+                    .expect("build tokio runtime failed!")
+                    .build()
+            }
+        }
+        _ => Resolver::builder_tokio()
+            .expect("build tokio runtime failed!")
+            .build(),
+    }
 }
 
 pub async fn resolve_dns(domain_name: impl AsRef<str>) -> Result<Vec<IpAddr>> {
@@ -22,12 +72,11 @@ pub async fn resolve_dns(domain_name: impl AsRef<str>) -> Result<Vec<IpAddr>> {
     if !is_valid_domain(domain_name) {
         return Err(anyhow!("Unvalid domain name"));
     }
-    let resolver = Resolver::builder_tokio()?.build();
     let domain_name = match domain_name.ends_with(".") {
         true => domain_name.to_string(),
         false => format!("{}.", domain_name),
     };
-    let response = resolver.lookup_ip(domain_name).await.unwrap();
+    let response = DNS_RESOVLER.lookup_ip(domain_name).await.unwrap();
     let mut res = Vec::new();
     for ip in response.iter() {
         res.push(ip);

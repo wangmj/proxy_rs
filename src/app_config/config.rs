@@ -48,7 +48,7 @@ impl AppConfig {
             .and_then(|x| x.to_str())
             .map(|x| x.to_ascii_lowercase());
 
-        let config_content: String = std::fs::read_to_string(&config_path)?;
+        let config_content: String = std::fs::read_to_string(config_path)?;
 
         match ext.as_deref() {
             Some("json") => parse_json(&config_content),

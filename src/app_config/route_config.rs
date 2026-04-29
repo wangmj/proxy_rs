@@ -7,11 +7,10 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::{dns_resolver, ethan::ethan_proto::DstType, geoip_helper};
+use crate::{APP_CONFIG, dns_resolver, ethan::ethan_proto::DstType, geoip_helper::GEOIP_READER};
 
 static DEFAULT_ROUTE_CONFIG: LazyLock<RouteConfig> =
     LazyLock::new(|| RouteConfig::new("*".to_string(), "Direct", RuleType::Default));
-
 
 #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
@@ -41,7 +40,7 @@ impl RouteManager {
                             || x.rule_type() == &RuleType::Geoipasn
                     })
                     .find(|x| x.is_match(ip.to_string()));
-                
+
                 match config {
                     Some(config) => config,
                     None => self
@@ -77,18 +76,34 @@ impl RouteManager {
                     .iter()
                     .filter(|&x| *x.rule_type() == RuleType::Domain)
                     .find(|&x| x.is_match(name));
-                //如果没匹配，则解析该name对应的ip地址，再次进行匹配
+
+                //如果没匹配，则检查是否在本地解析，
+                //如果在本地解析，则解析该name对应的ip地址，再次进行匹配
+                //否则，直接将匹配到默认规则
                 match config {
                     Some(config) => config,
-                    None => match dns_resolver::resolve_dns_pick_fastet(name) {
-                        Ok(ip) => match ip {
-                            IpAddr::V4(ipv4_addr) => self.get_match(&DstType::Ipv4(ipv4_addr)),
-                            IpAddr::V6(ipv6_addr) => self.get_match(&DstType::Ipv6(ipv6_addr)),
-                        },
-                        Err(err) => {
-                            log::warn!("在本地解析域名时失败，将直接转发direct,err:{err}");
-                            DEFAULT_ROUTE_CONFIG.deref()
+                    None => match APP_CONFIG.dns().resolver {
+                        super::dns_config::DNSResolver::Local => {
+                            match dns_resolver::resolve_dns_pick_fastet(name) {
+                                Ok(ip) => match ip {
+                                    IpAddr::V4(ipv4_addr) => {
+                                        self.get_match(&DstType::Ipv4(ipv4_addr))
+                                    }
+                                    IpAddr::V6(ipv6_addr) => {
+                                        self.get_match(&DstType::Ipv6(ipv6_addr))
+                                    }
+                                },
+                                Err(err) => {
+                                    log::warn!("在本地解析域名时失败，将直接转发direct,err:{err}");
+                                    DEFAULT_ROUTE_CONFIG.deref()
+                                }
+                            }
                         }
+                        super::dns_config::DNSResolver::Remote => self
+                            .0
+                            .iter()
+                            .find(|&x| x.rule_type() == &RuleType::Default)
+                            .unwrap_or_else(|| DEFAULT_ROUTE_CONFIG.deref()),
                     },
                 }
             }
@@ -162,7 +177,7 @@ impl FromStr for RuleType {
             "domain" => Ok(Self::Domain),
             "cidr" => Ok(Self::Cidr),
             "geoip:country" | "geoip_country" => Ok(Self::GeoipCountry),
-            "geoip:asn"|"geoip_asn" => Ok(Self::Geoipasn),
+            "geoip:asn" | "geoip_asn" => Ok(Self::Geoipasn),
             "default" => Ok(Self::Default),
             _ => Err(format!("无效规则类型: {}", s)),
         }
@@ -184,11 +199,11 @@ fn match_cidr(target: &str, rule: &str) -> bool {
 fn match_geoip_country(target: &str, rule: &str) -> bool {
     match IpAddr::from_str(target) {
         Ok(ip) => {
-            if let Ok(country) = geoip_helper::get_country(&ip) {
+            if let Ok(country) = GEOIP_READER.get_country(&ip) {
                 let country = country.trim();
                 rule.split([',', ';'])
                     .map(|x| x.trim())
-                    .any(|x| x.eq_ignore_ascii_case(&country))
+                    .any(|x| x.eq_ignore_ascii_case(country))
             } else {
                 false
             }
@@ -199,7 +214,7 @@ fn match_geoip_country(target: &str, rule: &str) -> bool {
 
 fn match_geo_asn(target: &str, rule: &str) -> bool {
     match IpAddr::from_str(target) {
-        Ok(ip) => match geoip_helper::get_asn(&ip) {
+        Ok(ip) => match GEOIP_READER.get_asn(&ip) {
             Ok(asn) => {
                 let asn = asn.trim();
                 rule.split([',', ';'])
