@@ -6,8 +6,10 @@ error.path = "/var/log/rs_proxy/error.log"
 [inbound]
 protocol = "socks5"
 port = 1080
-dns.resolver = "local"
-dns.server = ["8.8.8.8"]
+
+[dns]
+resolver = "local"
+server = ["8.8.8.8"]
 
 [[outbounds]]
 name = "ethan"

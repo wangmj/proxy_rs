@@ -10,17 +10,11 @@
   },
   "inbound": {
     "protocol": "socks5",
-    "port": 1080,
-    "dns": {
-      "resolver": "local",
-      "server": [
-        "8.8.8.8"
-      ]
-    }
+    "port": 1080
   },
   "outbounds": [
     {
-      "name":"proxy",
+      "name": "proxy",
       "protocol": "ethan",
       "uid": "ethan.wang",
       "pwd": "pass01!",
@@ -37,6 +31,12 @@
       "name": "direct"
     }
   ],
+  "dns": {
+    "resolver": "local",
+    "server": [
+      "8.8.8.8"
+    ]
+  },
   "routes": [
     {
       "to": "direct",

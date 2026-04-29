@@ -9,7 +9,7 @@ use proxy_rs::{APP_CONFIG, factory::inbound_factory::InBoundFactory};
 #[tokio::main]
 async fn main() {
     init();
-    let inbound = InBoundFactory::get(APP_CONFIG.inbound()).await;
+    let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(),APP_CONFIG.dns().clone()).await;
     inbound.start().await;
 }
 //整体的初始化
