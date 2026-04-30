@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use ipnetwork::IpNetwork;
 use serde_with::DeserializeFromStr;
 use std::{
@@ -11,6 +12,7 @@ use crate::{APP_CONFIG, dns_resolver, ethan::ethan_proto::DstType, geoip_helper:
 
 static DEFAULT_ROUTE_CONFIG: LazyLock<RouteConfig> =
     LazyLock::new(|| RouteConfig::new("*".to_string(), "Direct", RuleType::Default));
+
 
 #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
@@ -28,88 +30,54 @@ impl RouteManager {
         }
     }
 
-    pub(crate) fn get_match(&self, dst: &DstType) -> &RouteConfig {
-        match dst {
-            DstType::Ipv4(ip) => {
-                let config = self
-                    .0
-                    .iter()
-                    .filter(|&x| {
-                        x.rule_type() == &RuleType::Cidr
-                            || x.rule_type() == &RuleType::GeoipCountry
-                            || x.rule_type() == &RuleType::Geoipasn
-                    })
-                    .find(|x| x.is_match(ip.to_string()));
 
-                match config {
-                    Some(config) => config,
-                    None => self
-                        .0
-                        .iter()
-                        .find(|&x| x.rule_type() == &RuleType::Default)
-                        .unwrap_or_else(|| &DEFAULT_ROUTE_CONFIG),
-                }
-            }
-            DstType::Ipv6(ip) => {
-                let config = self
-                    .0
-                    .iter()
-                    .filter(|&x| {
-                        x.rule_type() == &RuleType::Cidr
-                            || x.rule_type() == &RuleType::GeoipCountry
-                            || x.rule_type() == &RuleType::Geoipasn
-                    })
-                    .find(|x| x.is_match(ip.to_string()));
-                match config {
-                    Some(config) => config,
-                    None => self
-                        .0
-                        .iter()
-                        .find(|&x| x.rule_type() == &RuleType::Default)
-                        .unwrap_or_else(|| DEFAULT_ROUTE_CONFIG.deref()),
-                }
-            }
-
+    pub(crate) async fn get_match(
+        &self,
+        dst: &DstType,
+    ) -> &RouteConfig {
+       let t= match dst {
+            DstType::Ipv4(ip) => self.get_match_ip(&Into::<IpAddr>::into(*ip) ),
+            DstType::Ipv6(ip) => self.get_match_ip(&Into::<IpAddr>::into(*ip)),
             DstType::DomainName(name) => {
-                let config = self
-                    .0
-                    .iter()
-                    .filter(|&x| *x.rule_type() == RuleType::Domain)
-                    .find(|&x| x.is_match(name));
-
-                //如果没匹配，则检查是否在本地解析，
-                //如果在本地解析，则解析该name对应的ip地址，再次进行匹配
-                //否则，直接将匹配到默认规则
-                match config {
-                    Some(config) => config,
-                    None => match APP_CONFIG.dns().resolver {
-                        super::dns_config::DNSResolver::Local => {
-                            match dns_resolver::resolve_dns_pick_fastet(name) {
-                                Ok(ip) => match ip {
-                                    IpAddr::V4(ipv4_addr) => {
-                                        self.get_match(&DstType::Ipv4(ipv4_addr))
-                                    }
-                                    IpAddr::V6(ipv6_addr) => {
-                                        self.get_match(&DstType::Ipv6(ipv6_addr))
-                                    }
-                                },
-                                Err(err) => {
-                                    log::warn!("在本地解析域名时失败，将直接转发direct,err:{err}");
-                                    DEFAULT_ROUTE_CONFIG.deref()
-                                }
-                            }
-                        }
-                        super::dns_config::DNSResolver::Remote => self
-                            .0
-                            .iter()
-                            .find(|&x| x.rule_type() == &RuleType::Default)
-                            .unwrap_or_else(|| DEFAULT_ROUTE_CONFIG.deref()),
-                    },
-                }
+                self.get_match_domain_name(name).await
             }
+        };
+
+       t.unwrap_or_else(||&DEFAULT_ROUTE_CONFIG)
+    }
+    fn get_match_ip(&self, ip: &IpAddr) -> Option<&RouteConfig> {
+        self.0
+            .iter()
+            .filter(|&x| {
+                x.rule_type() == &RuleType::Cidr
+                    || x.rule_type() == &RuleType::GeoipCountry
+                    || x.rule_type() == &RuleType::Geoipasn
+            })
+            .find(|x| x.is_match(ip.to_string()))
+    }
+    async fn get_match_domain_name(&self, name: impl AsRef<str>) -> Option<&RouteConfig> {
+        let name = name.as_ref();
+        let config = self
+            .0
+            .iter()
+            .filter(|&x| *x.rule_type() == RuleType::Domain)
+            .find(|&x| x.is_match(name));
+        //如果没匹配，则检查是否在本地解析，
+        //如果在本地解析，则解析该name对应的ip地址，再次进行匹配
+        //否则，直接将匹配到默认规则
+        match config {
+            Some(config) => Some(config),
+            None => match APP_CONFIG.dns().resolver {
+                crate::dns_config::DNSResolver::Local => {
+                    dns_resolver::resolve_dns_pick_fastet(name)
+                        .await
+                        .and_then(|ref ip| self.get_match_ip(ip).ok_or(anyhow!("aasdf")))
+                        .ok()
+                }
+                crate::dns_config::DNSResolver::Remote => None,
+            },
         }
     }
-
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -244,8 +212,8 @@ mod test {
 
     use super::*;
 
-    #[test]
-    fn routes_match() {
+    #[tokio::test]
+   async  fn routes_match() {
         let mut routes = Vec::new();
         routes.push(RouteConfig::new(
             "*.google.com",
@@ -274,19 +242,19 @@ mod test {
         let manager = RouteManager::from(routes);
 
         let goole_dst = DstType::DomainName("www.google.com".into());
-        let goole_dst_match = manager.get_match(&goole_dst);
+        let goole_dst_match = manager.get_match(&goole_dst).await;
         assert_eq!(goole_dst_match.to(), "proxy_goole");
 
         let ipv4_dst = DstType::Ipv4(Ipv4Addr::from_octets([192u8, 168, 5, 100]));
-        let ipv4_dst_match = manager.get_match(&ipv4_dst);
+        let ipv4_dst_match = manager.get_match(&ipv4_dst).await;
         assert_eq!(ipv4_dst_match.to(), "proxy_cidr");
 
         let github_dst = DstType::DomainName("www.github.com".into());
-        let github_dst_match = manager.get_match(&github_dst);
+        let github_dst_match = manager.get_match(&github_dst).await;
         assert_eq!(github_dst_match.to(), "proxy_github");
 
         let bing_dst = DstType::DomainName("www.baidu.com".into());
-        let bing_dst_match = manager.get_match(&bing_dst);
+        let bing_dst_match = manager.get_match(&bing_dst).await;
         assert_eq!(bing_dst_match.to(), "direct");
     }
 

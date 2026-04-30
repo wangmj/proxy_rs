@@ -167,7 +167,7 @@ impl Socks5InBoundHanlder {
         match cmd {
             Cmd::Connect => {
                 //检查是否在本地解析域名的规则放在了get_forward_to_remote方法内
-                let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request)?;
+                let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request).await?;
 
                 match OutBoundFactory::get(&outbound_config)
                     .connect_server(connect_request)

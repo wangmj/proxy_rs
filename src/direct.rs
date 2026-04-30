@@ -26,7 +26,7 @@ impl OutBoundProxy for Direct {
                 TcpStream::connect(SocketAddrV6::new(*ipv6_addr, port, 0, 0)).await?
             }
             DstType::DomainName(domain_name) => {
-                let ipaddr = resolve_dns_pick_fastet(domain_name)?;
+                let ipaddr = resolve_dns_pick_fastet(domain_name).await?;
                 TcpStream::connect(SocketAddr::new(ipaddr, port)).await?
             }
         };

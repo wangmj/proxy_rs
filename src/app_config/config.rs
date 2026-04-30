@@ -76,7 +76,7 @@ impl AppConfig {
     pub fn dns(&self) -> &Arc<DnsConfig> {
         &self.dns
     }
-    pub(crate) fn get_forward_to_remote(
+    pub(crate) async fn get_forward_to_remote(
         &self,
         connect_request: &ConnectRequest,
     ) -> Result<OutBoundTypeConfig> {
@@ -86,7 +86,7 @@ impl AppConfig {
             return Err(anyhow!("需要至少有一个路由选项"));
         }
         let target_dst_type = connect_request.dst_type();
-        let route = self.routes().get_match(target_dst_type);
+        let route = self.routes().get_match(target_dst_type).await;
         self.outbounds()
             .iter()
             .find(|x| x.eq_name_ignore_case(route.to()))
@@ -344,29 +344,29 @@ mod test {
         Ok(())
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn appconfig_get_outbound_test() -> Result<()> {
+   async fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
         let direct_outbound_config = OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
 
         let baidu_request = ConnectRequest::new(443, DstType::DomainName("www.baidu.com".into()));
         let get_outbound_config: OutBoundTypeConfig =
-            appconfig.get_forward_to_remote(&baidu_request)?;
+            appconfig.get_forward_to_remote(&baidu_request).await?;
         assert_eq!(get_outbound_config, direct_outbound_config);
 
         let ipv4_request = ConnectRequest::new(
             443,
             DstType::Ipv4(Ipv4Addr::from_octets([192, 168, 100, 100])),
         );
-        let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request)?;
+        let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request).await?;
         if let OutBoundTypeConfig::Direct(_direct) = get_outbound_config {
         } else {
             return Err(anyhow!("local ip should be a direct route"));
         }
 
         let domain_request = ConnectRequest::new(443, DstType::DomainName("www.google.com".into()));
-        let get_outbound_config = appconfig.get_forward_to_remote(&domain_request)?;
+        let get_outbound_config = appconfig.get_forward_to_remote(&domain_request).await?;
         if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
             assert_eq!(ethan_config.name(), "proxy");
         } else {

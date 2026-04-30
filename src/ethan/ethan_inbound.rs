@@ -123,6 +123,7 @@ impl EthanInBoundConnector {
 
         let output_config = APP_CONFIG
             .get_forward_to_remote(&request)
+            .await
             .expect("未找到匹配的路由");
         let output_bound = OutBoundFactory::get(&output_config);
         match output_bound.connect_server(request).await {

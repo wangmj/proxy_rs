@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use hickory_resolver::{
     Resolver,
-    config::{NameServerConfig, ResolverConfig},
+    config::{NameServerConfig, ResolverConfig, ResolverOpts},
     name_server::{GenericConnector, TokioConnectionProvider},
     proto::{runtime::TokioRuntimeProvider, xfer::Protocol},
 };
@@ -15,31 +15,32 @@ use tokio::net::TcpStream;
 
 use crate::APP_CONFIG;
 
-pub(crate) fn resolve_dns_pick_fastet(domain_name: impl AsRef<str>) -> Result<IpAddr> {
-    let f = async {
-        match resolve_dns(domain_name).await {
-            Ok(ipaddrs) => match pick_fastet_ip_with_ping(&ipaddrs).await {
-                Some(ipaddr) => Ok(ipaddr),
-                None => Err(anyhow!("not found fastet ip")),
-            },
-            Err(err) => Err(anyhow!("{err}")),
-        }
-    };
-    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
-    runtime.block_on(f)
+pub(crate) async fn resolve_dns_pick_fastet(domain_name: impl AsRef<str>) -> Result<IpAddr> {
+    match resolve_dns(domain_name).await {
+        Ok(ipaddrs) => match pick_fastet_ip_with_ping(&ipaddrs).await {
+            Some(ipaddr) => Ok(ipaddr),
+            None => Err(anyhow!("not found fastet ip")),
+        },
+        Err(err) => Err(anyhow!("{err}")),
+    }
 }
 
 static DNS_RESOVLER: LazyLock<Resolver<GenericConnector<TokioRuntimeProvider>>> =
     LazyLock::new(get_dns_resolver);
 
 fn get_dns_resolver() -> Resolver<GenericConnector<TokioRuntimeProvider>> {
+    let mut opts = ResolverOpts::default();
+    opts.num_concurrent_reqs = 50;
+    opts.timeout = Duration::from_secs(3);
+    opts.attempts = 1;
+    // opts.use_hosts_file = hickory_resolver::config::ResolveHosts:;
+    opts.edns0 = false;
+    let mut resolver_config = ResolverConfig::new();
     match &APP_CONFIG.dns().server {
         Some(ss) if !ss.is_empty() => {
-            let mut resolver_config = ResolverConfig::new();
-
             ss.iter()
                 .map_while(|item| {
-                    if item.contains(":") {
+                    if !item.contains(":") {
                         SocketAddr::from_str(format!("{item}:53").as_str()).ok()
                     } else {
                         SocketAddr::from_str(item).ok()
@@ -50,21 +51,19 @@ fn get_dns_resolver() -> Resolver<GenericConnector<TokioRuntimeProvider>> {
                     resolver_config.add_name_server(tmp);
                 });
             if !resolver_config.name_servers().is_empty() {
-                Resolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
-                    .build()
+                opts.use_hosts_file = hickory_resolver::config::ResolveHosts::Never;
             } else {
                 log::error!(
                     r#"因配置的dns 服务器 格式不正确，无法使用，转而使用系统的，正确格式例子:["8.8.8.8:53","8.8.8.8"]"#
                 );
-                Resolver::builder_tokio()
-                    .expect("build tokio runtime failed!")
-                    .build()
+                opts.use_hosts_file = hickory_resolver::config::ResolveHosts::Auto;
             }
         }
-        _ => Resolver::builder_tokio()
-            .expect("build tokio runtime failed!")
-            .build(),
+        _ => {}
     }
+    Resolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
+        .with_options(opts)
+        .build()
 }
 
 pub async fn resolve_dns(domain_name: impl AsRef<str>) -> Result<Vec<IpAddr>> {

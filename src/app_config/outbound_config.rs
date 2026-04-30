@@ -72,7 +72,7 @@ impl EthanOutBoundConfig {
         } else if let Ok(ipv6) = self.addr.parse::<Ipv6Addr>() {
             ipv6.into()
         } else {
-            resolve_dns_pick_fastet(&self.addr)?
+            resolve_dns_pick_fastet(&self.addr).await?
         };
         Ok(SocketAddr::new(ipaddr, self.port))
     }
