@@ -15,17 +15,28 @@ use crate::{ethan::ethan_proto::ConnectRequest, start_args::StartArgs};
 pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> Arc<AppConfig> {
-    let args = StartArgs::parse();
-    let config_path = match args.config() {
-        Some(path) => path.clone(),
-        None => {
-            let current_dir = env::current_dir().expect("get current directory failed!");
-            current_dir.join("config.toml")
-        }
-    };
-    AppConfig::open_readfile(config_path)
-        .expect("read config failed!")
-        .into()
+    #[cfg(not(test))]
+    {
+        let args = StartArgs::parse();
+        let config_path = match args.config() {
+            Some(path) => path.clone(),
+            None => {
+                let current_dir = env::current_dir().expect("get current directory failed!");
+                current_dir.join("config.toml")
+            }
+        };
+        AppConfig::open_readfile(config_path)
+            .expect("read config failed!")
+            .into()
+    }
+    #[cfg(test)]
+    {
+        let cur_dir = env::current_dir().expect("get current directory failed!");
+        let config_path = cur_dir.join("examples/config/client.toml");
+        AppConfig::open_readfile(config_path)
+            .expect("read config failed!")
+            .into()
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -345,8 +356,8 @@ mod test {
     }
 
     #[tokio::test]
-    #[ignore]
-   async fn appconfig_get_outbound_test() -> Result<()> {
+    #[ignore="该测试依赖网络，会触发在线的dns解析，耗时较长，因此仅在需要时测试"]
+    async fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
         let direct_outbound_config = OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
 

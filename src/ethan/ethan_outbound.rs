@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -16,9 +16,11 @@ use tokio_rustls::{
 use webpki_roots;
 
 use crate::{
+    ProxyError,
     app_config::EthanOutBoundConfig,
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     traits::{async_read_write::AsyncReadWrite, proxy_outbound::OutBoundProxy},
+    utils,
 };
 
 pub struct EthanOutBound {
@@ -70,9 +72,10 @@ impl EthanOutBoundConnector {
 
         let auth_request =
             AuthRequest::new(self.config.uid().to_string(), self.config.pwd().to_string());
-        let auth_bytes = auth_request.as_bytes();
+        let auth_bytes = auth_request.into_bytes();
         self.stream.write_u8(auth_bytes.len() as u8).await?;
         self.stream.write_all(&auth_bytes).await?;
+        self.stream.flush().await?;
 
         log::trace!("ethan client had send auth info to server, and then wait server");
 
@@ -83,24 +86,17 @@ impl EthanOutBoundConnector {
         log::trace!("ethan client received server auth response");
 
         let response = EthanResponse::try_from(&buff[..])?;
+
         if response.res() {
             log::info!("ethan client received server auth response: success");
             Ok(())
         } else {
-            log::error!(
-                "ethan client auth failed. the reason is: {}",
-                response
-                    .reason()
-                    .as_deref()
-                    .unwrap_or("server not return auth failed reason")
-            );
-            Err(anyhow!(
-                "ethan client auth failed. the reason is: {}",
-                response
-                    .reason()
-                    .as_deref()
-                    .unwrap_or("server not return auth failed reason")
-            ))
+            let reason = response
+                .reason()
+                .as_ref()
+                .cloned()
+                .unwrap_or("server not return auth failed reason".into());
+            Err(ProxyError::EthanAuthFailed(reason).into())
         }
     }
 
@@ -116,13 +112,12 @@ impl EthanOutBoundConnector {
         if response.res() {
             Ok(())
         } else {
-            Err(anyhow!(
-                "bind failed, err: {}",
-                response
-                    .reason()
-                    .as_deref()
-                    .unwrap_or("server not return auth failed reason")
-            ))
+            let reason = response
+                .reason()
+                .as_ref()
+                .cloned()
+                .unwrap_or("server not return auth failed reason".into());
+            Err(ProxyError::EthanBindError(reason).into())
         }
     }
 
@@ -134,8 +129,14 @@ impl EthanOutBoundConnector {
             let domain_name = &tls_config.domain_name;
             let mut root_cert_store =
                 RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            if !tls_config.crt_path.to_string_lossy().is_empty() {
-                let cert = CertificateDer::from_pem_file(&tls_config.crt_path)?;
+
+            let tls_crt_path = utils::expand_path(&tls_config.crt_path);
+            if tls_crt_path.exists() {
+                let reader = tokio::fs::File::open(&tls_config.crt_path)
+                    .await?
+                    .into_std()
+                    .await;
+                let cert = CertificateDer::from_pem_reader(reader)?;
                 root_cert_store.add(cert)?;
             }
 
@@ -150,10 +151,7 @@ impl EthanOutBoundConnector {
             let stream = connector
                 .connect(server_name, self.stream)
                 .await
-                .map_err(|e| {
-                    log::error!("hanle tls stream error: {:?}", e);
-                    anyhow!(e)
-                })?;
+                .map_err(ProxyError::TlsHandshakeError)?;
 
             log::trace!("client wrap straem with tls success!");
             Ok(Box::new(stream) as Box<_>)

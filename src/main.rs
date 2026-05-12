@@ -1,19 +1,23 @@
 use std::{
     fs::{self},
-    panic,
+    io, panic,
     path::Path,
 };
 
 use proxy_rs::{APP_CONFIG, factory::inbound_factory::InBoundFactory};
 
-#[tokio::main]
-async fn main() {
-    init();
-    let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(), APP_CONFIG.dns().clone()).await;
-    inbound.start().await;
+// #[tokio::main]
+fn main() -> io::Result<()> {
+    program_init();
+    let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(), APP_CONFIG.dns().clone());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .max_blocking_threads(512) // default value
+        .build()?;
+    runtime.block_on(inbound.start());
+    Ok(())
 }
 //整体的初始化
-fn init() {
+fn program_init() {
     init_logger();
 }
 //初始化日志

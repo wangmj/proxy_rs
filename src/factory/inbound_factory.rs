@@ -8,10 +8,7 @@ use crate::{
 pub struct InBoundFactory;
 
 impl InBoundFactory {
-    pub async fn get(
-        it: Arc<InBoundTypeConfig>,
-        dns_conf: Arc<DnsConfig>,
-    ) -> Box<dyn InBoundProxy> {
+    pub fn get(it: Arc<InBoundTypeConfig>, dns_conf: Arc<DnsConfig>) -> Box<dyn InBoundProxy> {
         match it.deref() {
             InBoundTypeConfig::Socks5(socks_in_bound_config) => Box::new(Socks5InBound::new(
                 socks_in_bound_config.clone().into(),

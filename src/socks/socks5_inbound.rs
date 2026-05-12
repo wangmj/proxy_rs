@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
-use crate::
-    dns_config::DnsConfig
-;
+use crate::{ProxyError, dns_config::DnsConfig};
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -48,14 +46,16 @@ impl InBoundProxy for Socks5InBound {
                 .expect("failed get local addr on socks5")
         );
         loop {
-            let config = self.config.clone();
-            let dns_config = self.dns_config.clone();
             if let Ok((stream, addr)) = listener.accept().await {
                 log::info!("received stream from addr:{}", &addr);
+
+                let config = self.config.clone();
+                let dns_config = self.dns_config.clone();
+
                 tokio::spawn(async move {
                     let mut handler = Socks5InBoundHanlder::new(stream, config, dns_config);
                     if let Err(err) = handler.handlestream().await {
-                        log::error!("handle stream failed, inner error: {}", err);
+                        log::error!("Socks5 handle stream failed, inner error: {}", err);
                     }
                 });
             }
@@ -71,17 +71,19 @@ struct Socks5InBoundHanlder {
 }
 
 impl Socks5InBoundHanlder {
-    fn new(
-        stream: TcpStream,
-        in_conf: impl Into<Arc<SocksInBoundConfig>>,
-        dns_conf: Arc<DnsConfig>,
-    ) -> Self {
+    fn new(stream: TcpStream, in_conf: Arc<SocksInBoundConfig>, dns_conf: Arc<DnsConfig>) -> Self {
         Self {
             stream,
-            inbound_config: in_conf.into(),
+            inbound_config: in_conf,
             dns_config: dns_conf,
         }
     }
+    async fn handlestream(&mut self) -> Result<()> {
+        self.auth_handle().await?;
+        self.bind_remote().await?;
+        Ok(())
+    }
+
     #[allow(unused)]
     fn auth_uid(&self) -> Option<&str> {
         self.inbound_config.uid()
@@ -89,16 +91,6 @@ impl Socks5InBoundHanlder {
     #[allow(unused)]
     fn auth_pwd(&self) -> Option<&str> {
         self.inbound_config.pwd()
-    }
-    async fn handlestream(&mut self) -> Result<()> {
-        if let Err(err) = self.auth_handle().await {
-            return Err(anyhow!(
-                "there is some error when process auth, inner error: {err}"
-            ));
-        }
-
-        self.bind_remote().await?;
-        Ok(())
     }
 
     async fn auth_handle(&mut self) -> Result<()> {
@@ -108,38 +100,29 @@ impl Socks5InBoundHanlder {
         let mut buff = vec![0u8; method_lens];
         let n = self.stream.read_exact(&mut buff).await?;
         if !n.eq(&method_lens) {
-            return Err(anyhow!(format!(
-                "received client support method failed! received lens:{} not eq defined lens:{}",
-                n, method_lens
-            )));
+            return Err(ProxyError::Socks5AuthError(format!(
+                "received lens:{n} not eq defined lens:{method_lens}"
+            ))
+            .into());
         }
         let auth_methods_from_client: Vec<_> = buff.iter().map(AuthMethod::from).collect();
         log::trace!(
             "client support auth methods:{:?}",
             &auth_methods_from_client
         );
-        let mut both_supported_authmethods =
-            find_both_support_auth_method(&auth_methods_from_client, &SERVER_SUPPORTED_AUTHS);
-        both_supported_authmethods.sort();
-        let support_auth = match both_supported_authmethods.first() {
-            Some(am) => *am,
-            None => {
-                let msg = format!(
-                    "There is no method with server and client all support,client supported methods:{:?}, server support methods:{:?}",
-                    auth_methods_from_client, SERVER_SUPPORTED_AUTHS
-                );
-                return Err(anyhow!(msg));
-            }
-        };
-        log::trace!("final authmethod:{:?}", &support_auth);
+        let support_auth = get_both_auth_method(&auth_methods_from_client)
+            .ok_or(ProxyError::Socks5NoSupportAuthMethod)?;
+        log::trace!("final authmethod:{:?}", support_auth);
+
         self.stream
-            .write_all(&[SOCKS_VERSION, support_auth.into()])
+            .write_all(&[SOCKS_VERSION, (*support_auth).into()])
             .await?;
 
+        //todo:实现其他认证
         if support_auth.eq(&AuthMethod::NoAuth) {
             Ok(())
         } else {
-            todo!("socks5支持其他认证方法")
+            unimplemented!("socks5支持其他认证方法")
         }
     }
 
@@ -149,10 +132,7 @@ impl Socks5InBoundHanlder {
         let mut response_builder = SocksResponse::builder();
 
         let cmd_byte = self.stream.read_u8().await?;
-        let cmd = match Cmd::try_from(cmd_byte) {
-            Ok(cmd) => cmd,
-            Err(e) => return Err(e),
-        };
+        let cmd = Cmd::try_from(cmd_byte)?;
         log::trace!("the client cmd is: {:?}", cmd);
         //读取rsv，该位没用
         let _rsv = self.stream.read_u8().await?;
@@ -166,7 +146,6 @@ impl Socks5InBoundHanlder {
 
         match cmd {
             Cmd::Connect => {
-                //检查是否在本地解析域名的规则放在了get_forward_to_remote方法内
                 let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request).await?;
 
                 match OutBoundFactory::get(&outbound_config)
@@ -179,6 +158,7 @@ impl Socks5InBoundHanlder {
                         let response = response.to_bytes();
                         self.stream.write_all(&response).await?;
                         self.stream.flush().await?;
+
                         transfer_data(&mut self.stream, &mut outbound_stream).await;
                     }
                     Err(err) => {
@@ -198,9 +178,7 @@ impl Socks5InBoundHanlder {
 async fn valid_socks_ver(stream: &mut TcpStream) -> Result<()> {
     let ver = stream.read_u8().await?;
     if !ver.eq(&SOCKS_VERSION) {
-        let msg = "socks version is incorrect";
-        log::warn!("{}", msg);
-        return Err(anyhow!(msg));
+        return Err(ProxyError::Socks5VersionIncorrect.into());
     }
     log::trace!("the socks version is correct!");
     Ok(())
@@ -220,18 +198,24 @@ where
     }
 }
 
-//todo: 优化该代码，返回借用的值
-fn find_both_support_auth_method(
-    client_auth_methods: &[AuthMethod],
-    server_auth_methods: &[AuthMethod],
-) -> Vec<AuthMethod> {
-    server_auth_methods
+fn get_both_auth_method(client_auth_methods: &[AuthMethod]) -> Option<&AuthMethod> {
+    let mut v: Vec<_> = client_auth_methods
         .iter()
-        .filter(|sm| client_auth_methods.contains(sm))
-        .copied()
-        .collect()
+        .filter(|&am| SERVER_SUPPORTED_AUTHS.contains(am))
+        .collect();
+    v.sort_by(|&x, &y| y.cmp(x));
+    match v.first() {
+        Some(&am) => Some(am),
+        None => None,
+    }
 }
-
+/*ATYP (1 字节): DST.ADDR 字段的地址类型。
+X'01' (1): IPv4 地址，DST.ADDR 字段⻓度为 4 字节。
+X'03' (3): 域名，DST.ADDR 字段的第⼀个字节表示域名⻓度，后续是域名本身。
+X'04' (4): IPv6 地址，DST.ADDR 字段⻓度为 16 字节。
+DST.ADDR (可变⻓度): ⽬标地址。⻓度由 ATYP 字段决定。
+DST.PORT (2 字节): ⽬标端⼝号（⽹络字节序，即⼤端序）。
+*/
 async fn read_address(stream: &mut TcpStream) -> Result<ConnectRequest> {
     let t = stream.read_u8().await?;
     match t {
@@ -240,7 +224,6 @@ async fn read_address(stream: &mut TcpStream) -> Result<ConnectRequest> {
             stream.read_exact(&mut buf).await?;
             let port = stream.read_u16().await?;
             ConnectRequest::try_from((SocksAddressType::Ipv4, &buf[..], port))
-            // Ok((SocksAddressType::Ipv4, buf.to_vec(), port))
         }
         0x03 => {
             let len = stream.read_u8().await.expect("get domain length") as usize;
@@ -248,15 +231,25 @@ async fn read_address(stream: &mut TcpStream) -> Result<ConnectRequest> {
             stream.read_exact(&mut domain).await?;
             let port = stream.read_u16().await?;
             ConnectRequest::try_from((SocksAddressType::Domain, &domain[..], port))
-            // Ok((SocksAddressType::Domain, domain, port))
         }
         0x04 => {
             let mut buf = [0; 16];
             stream.read_exact(&mut buf).await?;
             let port = stream.read_u16().await?;
             ConnectRequest::try_from((SocksAddressType::Ipv6, &buf[..], port))
-            // Ok((SocksAddressType::Ipv6, buf.to_vec(), port))
         }
-        _ => Err(anyhow!(format!("unkonw atyp: {}", t))),
+        _ => Err(ProxyError::Socks5UnknownAtyp.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_both_auth_method_test() {
+        let client_auth_methods = [AuthMethod::NoAuth, AuthMethod::UserPwd];
+        let supported = get_both_auth_method(&client_auth_methods);
+        assert_eq!(supported, Some(&AuthMethod::UserPwd));
     }
 }

@@ -213,6 +213,7 @@ mod test {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "1.该测试依赖本地文件examples/config/client.toml中的配置，且当配置中的dns.resolver=local时，会触发在线的dns解析，耗时较长，因此仅在需要时测试"]
    async  fn routes_match() {
         let mut routes = Vec::new();
         routes.push(RouteConfig::new(

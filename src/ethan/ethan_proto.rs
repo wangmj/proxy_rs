@@ -6,10 +6,14 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use crate::socks::socks5_proto::SocksAddressType;
+use crate::{ProxyError, socks::socks5_proto::SocksAddressType};
 
-///连接指令
-#[derive(Debug, PartialEq)]
+///连接请求
+// 本来实现是想实现零拷贝类型的，但经过思考及探索，发现不可避免都要拷贝，原因是：
+// 1.该类型总会持有数据，因为从接入的请求中读取出的数据存在缓存中，这些数据继续放在缓存中不合适，只能是该类型持有这些数据，这个过程实现的是move，但由于是u8的数组，大部分的时候是copy
+// 2.该类型使用过程中，需要多次返回一些请求的类型DstType，如果不持有数据，则无法返回DstType的引用，并且每次返回都需要构造，与其这样，还不如直接持有数据，返回DstType的引用合适
+// 3.之前考虑过直接使用ConnectRequest(Vec<u8>)的实现，原因是这样会实现From<u8>和as_bytes会更加便捷，但由于上面的原因会产生多次copy，而as_bytes改为into_bytes，只会产生一次移动，因此综合考虑还是使用这种实现
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct ConnectRequest {
     dst_port: u16,
     dst_type: DstType,
@@ -30,29 +34,29 @@ impl DstType {
             DstType::DomainName(str) => str.len() + 2,
         }
     }
-    pub fn as_bytes(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(self.len());
-        match self {
-            DstType::Ipv4(ipv4_addr) => {
-                v.put_u8(1);
-                v.put_u32(ipv4_addr.to_bits());
-                v
-            }
-            DstType::Ipv6(ipv6_addr) => {
-                v.put_u8(2);
-                v.put_u128(ipv6_addr.to_bits());
-                v
-            }
-            DstType::DomainName(str) => {
-                assert!(str.len() < u8::MAX as usize);
+    // pub fn into_bytes(self) -> Vec<u8> {
+    //     let mut v = Vec::with_capacity(self.len());
+    //     match self {
+    //         DstType::Ipv4(ipv4_addr) => {
+    //             v.put_u8(1);
+    //             v.put_u32(ipv4_addr.to_bits());
+    //             v
+    //         }
+    //         DstType::Ipv6(ipv6_addr) => {
+    //             v.put_u8(2);
+    //             v.put_u128(ipv6_addr.to_bits());
+    //             v
+    //         }
+    //         DstType::DomainName(str) => {
+    //             assert!(str.len() < u8::MAX as usize);
 
-                v.put_u8(3);
-                v.put_u8(str.len() as u8);
-                v.put(str.as_bytes());
-                v
-            }
-        }
-    }
+    //             v.put_u8(3);
+    //             v.put_u8(str.len() as u8);
+    //             v.put(str.as_bytes());
+    //             v
+    //         }
+    //     }
+    // }
 
     pub fn from_bytes(val: &[u8]) -> Result<Self> {
         let mut bytes = BytesMut::from(val);
@@ -94,7 +98,21 @@ impl ConnectRequest {
         let mut v = Vec::with_capacity(total);
         // v.put_u8(total as u8);
         v.put_u16(self.dst_port);
-        v.put(self.dst_type.as_bytes().as_slice());
+        match &self.dst_type {
+            DstType::Ipv4(ipv4_addr) => {
+                v.push(1);
+                v.extend_from_slice(ipv4_addr.octets().as_slice());
+            }
+            DstType::Ipv6(ipv6_addr) => {
+                v.push(2);
+                v.extend_from_slice(ipv6_addr.octets().as_slice());
+            }
+            DstType::DomainName(domain_name) => {
+                v.push(3);
+                v.push(domain_name.len() as u8);
+                v.extend_from_slice(domain_name.as_bytes());
+            }
+        }
         v
     }
     pub fn dst_type(&self) -> &DstType {
@@ -172,6 +190,7 @@ impl Display for ConnectRequest {
         write!(f, "addr {}, port {}", self.dst_type, self.dst_port)
     }
 }
+
 ///连接结果
 #[derive(Debug, PartialEq)]
 pub(crate) struct EthanResponse {
@@ -244,7 +263,7 @@ impl TryFrom<&[u8]> for EthanResponse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct AuthRequest {
     uid: String,
     pwd: String,
@@ -254,7 +273,7 @@ impl AuthRequest {
     pub fn new(uid: String, pwd: String) -> Self {
         Self { uid, pwd }
     }
-    pub fn as_bytes(&self) -> Vec<u8> {
+    pub fn into_bytes(self) -> Vec<u8> {
         let mut v = Vec::new();
         v.extend_from_slice(self.uid.as_bytes());
         v.extend_from_slice("💌".as_bytes());
@@ -270,7 +289,7 @@ impl AuthRequest {
 }
 
 impl TryFrom<&[u8]> for AuthRequest {
-    type Error = anyhow::Error;
+    type Error = ProxyError;
 
     fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
         let str = String::from_utf8_lossy(value);
@@ -280,9 +299,7 @@ impl TryFrom<&[u8]> for AuthRequest {
                 pwd: pwd.to_string(),
             })
         } else {
-            Err(anyhow!(
-                "parse to auth request failed! not found split characters"
-            ))
+            Err(ProxyError::EthanAuthRequestParseError)
         }
     }
 }
@@ -297,55 +314,59 @@ mod test {
     #[test]
     fn auth_request_test() -> Result<()> {
         let request = AuthRequest::new("uid".into(), "pwd".into());
-        let bytes = request.as_bytes();
+        let request_clone = request.clone();
+        let bytes = request.into_bytes();
         let request2 = AuthRequest::try_from(bytes.as_slice())?;
-        assert_eq!(request.pwd, request2.pwd);
-        assert_eq!(request.uid, request2.uid);
+        assert_eq!(request_clone.pwd, request2.pwd);
+        assert_eq!(request_clone.uid, request2.uid);
         assert_eq!(request2.pwd, "pwd");
         assert_eq!(request2.uid, "uid");
         Ok(())
     }
 
-    #[test]
-    fn dsttype_test() -> Result<()> {
-        let t1 = DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1));
-        let t1_bytes = t1.as_bytes();
-        let t1_recovered = DstType::from_bytes(t1_bytes.as_slice())?;
-        assert_eq!(t1, t1_recovered);
+    // #[test]
+    // fn dsttype_test() -> Result<()> {
+    //     let t1 = DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1));
+    //     let t1_bytes = t1.into_bytes();
+    //     let t1_recovered = DstType::from_bytes(t1_bytes.as_slice())?;
+    //     assert_eq!(t1, t1_recovered);
 
-        let t2 = DstType::DomainName("www.baidu.com".into());
-        let t2_bytes = t2.as_bytes();
-        let t2_recovered = DstType::from_bytes(&t2_bytes)?;
-        assert_eq!(t2, t2_recovered);
+    //     let t2 = DstType::DomainName("www.baidu.com".into());
+    //     let t2_bytes = t2.into_bytes();
+    //     let t2_recovered = DstType::from_bytes(&t2_bytes)?;
+    //     assert_eq!(t2, t2_recovered);
 
-        let ipv6 = Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
-        let t3 = DstType::Ipv6(ipv6);
-        let t3_bytes = t3.as_bytes();
-        let t3_recovered = DstType::from_bytes(&t3_bytes)?;
-        assert_eq!(t3, t3_recovered);
+    //     let ipv6 = Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
+    //     let t3 = DstType::Ipv6(ipv6);
+    //     let t3_bytes = t3.into_bytes();
+    //     let t3_recovered = DstType::from_bytes(&t3_bytes)?;
+    //     assert_eq!(t3, t3_recovered);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     #[test]
     fn connect_request_test() -> Result<()> {
         let domain_connect_request =
             ConnectRequest::new(9000, DstType::DomainName("www.baidu.com".into()));
+        let cloned = domain_connect_request.clone();
         let tmp = domain_connect_request.as_bytes();
         let domain_connect_request2 = ConnectRequest::try_from(tmp.as_slice())?;
-        assert_eq!(domain_connect_request, domain_connect_request2);
+        assert_eq!(cloned, domain_connect_request2);
 
         let ipv4_connect_request =
             ConnectRequest::new(8000, DstType::Ipv4(Ipv4Addr::new(192u8, 168, 100, 1)));
+        let cloned = ipv4_connect_request.clone();
         let tmp = ipv4_connect_request.as_bytes();
         let ipv4_connect_request2 = ConnectRequest::try_from(tmp.as_slice())?;
-        assert_eq!(ipv4_connect_request, ipv4_connect_request2);
+        assert_eq!(cloned, ipv4_connect_request2);
 
         let ipv6 = Ipv6Addr::from_str("2001:0db8:85a3:0000:0000:8a2e:0370:7334")?;
         let ipv6_connect_request = ConnectRequest::new(1000, DstType::Ipv6(ipv6));
+        let cloned = ipv6_connect_request.clone();
         let tmp = ipv6_connect_request.as_bytes();
         let ipv6_connect_request2 = ConnectRequest::try_from(tmp.as_slice())?;
-        assert_eq!(ipv6_connect_request, ipv6_connect_request2);
+        assert_eq!(cloned, ipv6_connect_request2);
 
         Ok(())
     }
