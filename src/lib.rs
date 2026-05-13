@@ -16,14 +16,12 @@ use std::fmt::{Debug, Display};
 pub use app_config::config::*;
 pub use app_config::*;
 
-
-
 #[derive(Debug)]
-pub enum ProxyError
-{
+pub enum ProxyError {
     Socks5VersionIncorrect,
     Socks5AuthError(String),
     Socks5NoSupportAuthMethod,
+    Socks5AuthReject,
     Socks5CmdParseError(u8),
     Socks5UnknownAtyp,
     EthanAuthFailed(String),
@@ -31,10 +29,10 @@ pub enum ProxyError
     EthanBindError(String),
     TlsHandshakeError(std::io::Error),
     EthanAuthRequestParseError,
+    LengthNotMatchedAggree(String),
+    Socks5NotSupportAuthmethod,
 }
-impl Display for ProxyError
-
-{
+impl Display for ProxyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProxyError::Socks5AuthError(msg) => write!(f, "Socks5 auth failed! {msg}"),
@@ -54,8 +52,15 @@ impl Display for ProxyError
             }
             ProxyError::EthanAuthFailed(msg) => write!(f, "Ethan auth failed, reason: {msg}"),
             ProxyError::EthanBindError(msg) => write!(f, "Ethan bind failed, reason: {msg}"),
-            ProxyError::TlsHandshakeError(error) => write!(f,"Tls hand shake failed, {error}"),
-            ProxyError::EthanAuthRequestParseError => write!(f,"Ethan proto auth request parse failed!"),
+            ProxyError::TlsHandshakeError(error) => write!(f, "Tls hand shake failed, {error}"),
+            ProxyError::EthanAuthRequestParseError => {
+                write!(f, "Ethan proto auth request parse failed!")
+            }
+            ProxyError::LengthNotMatchedAggree(msg) => {
+                write!(f, "The length is not matched with aggree, {msg}")
+            }
+            ProxyError::Socks5NotSupportAuthmethod => write!(f,"Server doesnot supported that auth method"),
+            ProxyError::Socks5AuthReject => write!(f,"Server reject auth"),
                     }
     }
 }

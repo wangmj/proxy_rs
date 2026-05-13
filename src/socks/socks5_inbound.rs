@@ -118,11 +118,13 @@ impl Socks5InBoundHanlder {
             .write_all(&[SOCKS_VERSION, (*support_auth).into()])
             .await?;
 
-        //todo:实现其他认证
-        if support_auth.eq(&AuthMethod::NoAuth) {
-            Ok(())
-        } else {
-            unimplemented!("socks5支持其他认证方法")
+        match support_auth {
+            AuthMethod::NoAuth => Ok(()),
+            AuthMethod::UserPwd => {
+                user_pwd_auth(&mut self.stream, self.inbound_config.clone()).await
+            }
+            AuthMethod::Gssapi => Err(ProxyError::Socks5NoSupportAuthMethod.into()),
+            AuthMethod::Reject => Err(ProxyError::Socks5AuthReject.into()),
         }
     }
 
@@ -181,6 +183,61 @@ async fn valid_socks_ver(stream: &mut TcpStream) -> Result<()> {
         return Err(ProxyError::Socks5VersionIncorrect.into());
     }
     log::trace!("the socks version is correct!");
+    Ok(())
+}
+
+//socks5 user pwd认证
+async fn user_pwd_auth(
+    handler: &mut TcpStream,
+    inbound_config: Arc<SocksInBoundConfig>,
+) -> Result<()> {
+    let send_result = async |handler: &mut TcpStream, res: bool| {
+        match res {
+            //X'00' (0): 认证成功。
+            //X'01' (1): 认证失败。
+            true => handler.write_all(&[1u8, 0]).await,
+            false => handler.write_all(&[1u8, 1]).await,
+        }
+    };
+    let ver = handler.read_u8().await?;
+    if !ver.eq(&1) {
+        send_result(handler, false).await?;
+        return Err(ProxyError::Socks5VersionIncorrect.into());
+    }
+
+    let u_lens = handler.read_u8().await?;
+    log::trace!("socks5 user_lens:{u_lens}");
+    let mut user_buff = vec![0u8; u_lens as usize];
+    let u_lens_read = handler.read_exact(&mut user_buff).await?;
+    if !u_lens.eq(&(u_lens_read as u8)) {
+        send_result(handler, false).await?;
+        return Err(ProxyError::LengthNotMatchedAggree("Socks5 Auth user name".into()).into());
+    }
+    let user_read = String::from_utf8_lossy(&user_buff);
+    log::trace!("user name from client:{user_read}");
+    if !user_read.eq(&inbound_config.uid().unwrap_or_default()) {
+        send_result(handler, false).await?;
+        return Err(ProxyError::Socks5AuthError("User is incorrect!".into()).into());
+    }
+
+    let p_lens = handler.read_u8().await? as usize;
+    log::trace!("socks5 pwd_lens:{p_lens}");
+    let mut p_buff = vec![0u8; p_lens];
+    let p_lens_read = handler.read_exact(&mut p_buff).await?;
+    if !p_lens_read.eq(&p_lens) {
+        send_result(handler, false).await?;
+        return Err(ProxyError::LengthNotMatchedAggree("Socks5 Auth pwd".into()).into());
+    }
+    let pwd_read = String::from_utf8_lossy(&p_buff);
+    log::debug!("pwd from client:{pwd_read}");
+    if !pwd_read.eq(&inbound_config.pwd().unwrap_or_default()) {
+        send_result(handler, false).await?;
+        return Err(ProxyError::Socks5AuthError("Pwd is incorrect!".into()).into());
+    }
+
+    send_result(handler, true).await?;
+    log::info!("socks5 auth success!");
+
     Ok(())
 }
 

@@ -1,11 +1,13 @@
 [log]
-access.level = "info"
+access.level = "trace"
 access.path = "log/access.log"
 error.path = "/var/log/rs_proxy/error.log"
 
 [inbound]
 protocol = "socks5"
 port = 1080
+uid="test"
+pwd="test"
 
 [dns]
 resolver = "local"
