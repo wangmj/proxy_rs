@@ -1,69 +1,41 @@
-# proxy_rs 项目说明
+# proxy_rs
 
-一个使用 Rust 实现的轻量代理程序。
-
-项目通过不同的 Inbound 和 Outbound 组合，实现以下两类典型部署：
+使用 Rust 实现的轻量代理程序，支持以下典型组合：
 
 1. 客户端模式：Socks5 入站 + Ethan 出站
 2. 服务端模式：Ethan 入站 + Direct 出站
 
-其中 Ethan 是项目内自定义的传输协议，可选 TLS Direct 表示直连目标地址。
+其中 Ethan 是项目内自定义协议，可选 TLS 保护客户端到服务端链路。
 
-## 1. 项目目标与能力
+## 1. 功能概览
 
-### 1.1 核心目标
+1. Socks5 入站（当前只实现 Connect）。
+2. Ethan 入站与出站（uid/pwd 鉴权）。
+3. Direct 出站（直接连接目标地址）。
+4. 支持 TOML 和 JSON 配置。
+5. 路由分流：Domain / CIDR / GeoIP(country, asn) / Default。
+6. DNS 策略：local / remote，支持自定义 DNS 服务器列表。
+7. 日志输出到 stdout 与文件。
+8. 支持 Ctrl+C 优雅退出（停止接收新连接并等待已有连接关闭）。
 
-1. 在客户端接收 Socks5 请求。
-2. 将需要代理的请求通过 Ethan over TCP/TLS 转发到服务端。
-3. 在服务端转发到真实目标，并将数据回传给客户端。
-4. 支持按规则分流：命中规则走远端代理，不命中本地直连。
+## 2. 架构与链路
 
-### 1.2 当前功能
+典型客户端链路如下：
 
-1. Socks5 入站（Connect）。
-2. Ethan 入站/出站（带简单鉴权 uid/pwd）。
-3. Direct 出站（直接连接目标）。
-4. 可选 TLS（客户端到服务端链路）。
-5. 日志输出到 stdout 和文件。
-6. 路由规则分流（domain/ip，正则匹配）。
+应用 -> Socks5 Inbound -> 路由匹配 -> Ethan Outbound 或 Direct Outbound
 
-## 2. 架构说明
+当流量走 Ethan 时：
 
-### 2.1 组件
+客户端 Ethan Outbound -> 服务端 Ethan Inbound -> 服务端路由 -> Direct/Ethan Outbound -> 目标站
 
-1. Inbound
-- socks5：监听本地端口，接受应用代理请求。
-- ethan：监听服务端端口，接受客户端 Ethan 请求。
+## 3. 构建与启动
 
-2. Outbound
-- ethan：连接远端 Ethan 服务。
-- Direct：直接连接目标地址。
+### 3.1 环境要求
 
-3. 工厂
-- InBoundFactory：根据配置生成 socks5 或 ethan 入站。
-- OutBoundFactory：根据配置生成 ethan 或 Direct 出站。
-
-4. 配置
-- 启动时读取 TOML/JSON 配置并构建 APP_CONFIG。
-- 支持 route 规则进行出站分流。
-
-### 2.2 典型链路
-
-客户端模式（建议）：
-应用 -> Socks5 Inbound -> 规则匹配 ->
-1) 命中：Ethan Outbound -> 服务端 Ethan Inbound -> Direct Outbound -> 目标站
-2) 不命中：Direct Outbound -> 目标站
-
-## 3. 构建与运行
-
-## 3.1 环境要求
-
-1. Rust stable（推荐通过 rustup 安装）。
-2. macOS/Linux/Windows 均可，示例路径按 macOS/Linux 给出。
+1. Rust stable（建议使用 rustup）。
+2. macOS / Linux / Windows。
 
 ### 3.2 编译
-
-在项目根目录执行：
 
 ```bash
 cargo build --release
@@ -81,18 +53,50 @@ target/release/proxy_rs
 -c, --config <FILE>
 ```
 
-指定配置文件路径。支持 `.toml` 和 `.json`。若不指定，默认读取当前目录下 `config.toml`。
+1. 支持 `.toml` 与 `.json`。
+2. 未指定时默认读取当前目录的 `config.toml`。
 
-## 4. 配置说明
+### 3.4 启动示例
 
-配置文件支持 TOML 和 JSON，顶层主要包含：
+使用 TOML：
 
-1. log
-2. inbound
-3. outbound
-4. route（可选）
+```bash
+# 服务端
+./target/release/proxy_rs -c examples/config/server.toml
 
-### 4.1 日志配置
+# 客户端
+./target/release/proxy_rs -c examples/config/client.toml
+```
+
+使用 JSON：
+
+```bash
+# 服务端
+./target/release/proxy_rs -c examples/config/server.json
+
+# 客户端
+./target/release/proxy_rs -c examples/config/client.json
+```
+
+业务程序接入客户端 Socks5：
+
+```text
+127.0.0.1:1080
+```
+
+## 4. 配置模型
+
+顶层字段如下：
+
+1. `log`
+2. `inbound`
+3. `outbounds`（数组）
+4. `routes`（数组）
+5. `dns`（可选）
+
+注意：当前代码按 `name` 在 `outbounds` 中查找目标出站，因此每个 outbound 都必须配置 `name`。
+
+### 4.1 log
 
 ```toml
 [log]
@@ -100,197 +104,161 @@ access.level = "info"
 access.path = "log/access.log"
 ```
 
-说明：
+`access.level` 支持：`trace/debug/info/warn/error`。
 
-1. access.level 支持 trace/debug/info/warn/error。
-2. access.path 文件不存在时会自动创建目录和文件。
+### 4.2 inbound
 
-### 4.2 客户端配置示例（Socks5 + Ethan）
+Socks5：
 
 ```toml
-[log]
-access.level = "trace"
-access.path = "log/access.log"
-
 [inbound]
 protocol = "socks5"
 port = 1080
+# 可选，配置后可启用用户名密码认证
+# uid = "test"
+# pwd = "test"
+```
 
-[outbound]
+Ethan：
+
+```toml
+[inbound]
+protocol = "ethan"
+port = 10800
+uid = "ethan.wang"
+pwd = "pass01!"
+
+# tls配置可选，没有则使用tcp连接
+[inbound.tls]
+crt_path = "examples/certs/fullchain.pem"
+key_path = "examples/certs/privkey.pem"
+domain_name = "localhost"
+```
+
+### 4.3 outbounds
+
+Ethan outbound：
+
+```toml
+[[outbounds]]
+name = "proxy"
 protocol = "ethan"
 uid = "ethan.wang"
 pwd = "pass01!"
 port = 10800
 addr = "dev.ubuntu"
 
-[outbound.tls]
+#tls配置可选，与服务端保持一致
+[outbounds.tls]
 use_tls = true
 domain_name = "dev.ubuntu"
-crt_path = "/Users/you/certs/dev.ubuntu.crt"
-
-[outbound.dns]
-resolver = "local"
-server = ["8.8.8.8"]
-
-[route]
-# 命中正则规则 -> 走远端 Ethan
-# 未命中 -> 本地 Direct 直连
-domain = ["(^|\\.)google\\.com$", "^github\\.com$"]
-ip = ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$", "^2001:db8:.*"]
+crt_path = "examples/certs/dev.ubuntu.crt"
 ```
 
-### 4.3 服务端配置示例（Ethan + Direct）
+Direct outbound：
 
 ```toml
-[log]
-access.level = "info"
-access.path = "log/server_access.log"
-
-[inbound]
-protocol = "ethan"
-port = 10800
-uid = "ethan.wang"
-pwd = "pass01!"
-
-[inbound.tls]
-use_tls = true
-crt_path = "examples/certs/fullchain.pem"
-key_path = "examples/certs/privkey.pem"
-domain_name = "localhost"
-
-[outbound]
-protocol = "Direct"
+[[outbounds]]
+name = "direct"
+protocol = "direct"
 ```
 
-### 4.4 客户端 JSON 配置示例（Socks5 + Ethan）
+### 4.4 routes
 
-```json
-{
-  "log": {
-    "access": {
-      "level": "trace",
-      "path": "log/access.log"
-    }
-  },
-  "inbound": {
-    "protocol": "socks5",
-    "port": 1080
-  },
-  "outbound": {
-    "protocol": "ethan",
-    "uid": "ethan.wang",
-    "pwd": "pass01!",
-    "port": 10800,
-    "addr": "dev.ubuntu",
-    "tls": {
-      "use_tls": true,
-      "domain_name": "dev.ubuntu"
-    },
-    "dns": {
-      "resolver": "local",
-      "server": ["8.8.8.8"]
-    }
-  },
-  "route": {
-    "domain": ["(^|\\.)google\\.com$", "^github\\.com$"],
-    "ip": ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$", "^2001:db8:.*"]
-  }
-}
+根据匹配规则rule和rule_type进行匹配，转发到to对应的oubounds，所有未匹配到的会通过rule_type="default"对应的outbounds转发
+最小可用示例（建议总是包含 default）：
+
+```toml
+[[routes]]
+to = "direct" 
+rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+rule_type = "CIDR"
+
+[[routes]]
+to = "direct"
+rule = "CN"
+rule_type = "GeoIP:country"
+
+[[routes]]
+to = "direct"
+rule = "AS4134,AS4837"
+rule_type = "GeoIP:asn"
+
+[[routes]]
+to = "proxy"
+rule = "*"
+rule_type = "default"
 ```
 
-## 5. route 分流规则
+`rule_type` 当前支持：
 
-### 5.1 规则语义
+1. `domain`：域名精确匹配或通配后缀（如 `*.google.com`）。
+2. `cidr`：CIDR 列表（逗号或分号分隔）。
+3. `geoip:country`：国家码列表（如 `CN,US`）。
+4. `geoip:asn`：ASN 列表（如 `AS4134,AS4837`）。
+5. `default`：兜底规则。
 
-1. route.domain：对目标域名进行正则匹配（内部会先转小写后匹配）。
-2. route.ip：对目标 IP 字符串进行正则匹配（IPv4/IPv6 都支持）。
-3. domain 或 ip 任意一条命中即判定命中规则。
-4. route 未配置或为空时，保持兼容行为：全部请求走 outbound。
-5. 非法正则会被忽略，并记录 warn 日志。
+### 4.5 dns
 
-### 5.2 正则建议
-
-1. 建议使用 ^ 和 $ 限定边界，避免误匹配。
-2. 域名点号请转义为 \\.
-3. 匹配子域可用 (^|\\.)example\\.com$
-
-## 6. DNS 解析策略
-
-Ethan 出站支持两种策略：
-
-1. local
-- 客户端先将域名解析为 IP，再发送给服务端。
-
-2. remote
-- 客户端保留域名，服务端侧再解析。
-
-该选项位于 outbound.dns.resolver。
-
-## 7. 运行方式
-
-### 7.1 使用toml配置启动服务端
-
-客户端
-
-```bash
-./target/release/proxy_rs -c examples/config/server.toml
+```toml
+[dns]
+resolver = "local"   # local 或 remote
+server = ["8.8.8.8", "1.1.1.1:53"]
 ```
 
-服务端
+1. `local`：在本地进行域名解析，并将解析后的地址通过routes中的规则进行匹配。
+2. `remote`：在服务端解析域名，在本地只进行rule_type="domain"的路由规则匹配。
+3. `server` 为空时使用系统 DNS。
 
-```bash
-./target/release/proxy_rs -c examples/config/client.toml
-```
+### 4.6 JSON 示例
 
-### 7.2 使用 JSON 配置启动
+可直接参考：
 
-服务端：
+1. `examples/config/client.json`
+2. `examples/config/server.json`
 
-```bash
-./target/release/proxy_rs -c examples/config/server.json
-```
+## 5. GeoIP 数据文件
 
-客户端：
+GeoIP 规则依赖以下本地文件（默认相对项目根目录）：
 
-```bash
-./target/release/proxy_rs -c examples/config/client.json
-```
+1. `geoips/GeoLite2-City.mmdb`
+2. `geoips/GeoLite2-ASN.mmdb`
 
-### 7.4 业务程序接入
+若缺失，GeoIP 相关匹配会失败。
 
-将浏览器或系统代理指向客户端 Socks5 监听地址，例如：
+## 6. 已知限制
 
-```text
-127.0.0.1:1080
-```
+1. Socks5 目前仅实现 Connect，`BIND/UDP` 尚未实现。
+2. Socks5 仅支持 `NoAuth` 和 `UserPwd` 两种协商方式。
+3. Ethan 为私有协议，客户端与服务端版本需要匹配。
 
-## 8. 已知限制
-
-1. Socks5 当前主要实现 Connect 流程，Bind/Udp 仍为待实现。
-2. Socks5 认证当前优先 NoAuth，其他认证方式未完成。
-3. Ethan 协议为项目内协议，需客户端和服务端版本匹配。
-
-## 9. 开发与测试
-
-### 9.1 运行测试
+## 7. 开发与测试
 
 ```bash
 cargo test
 ```
 
+已验证示例配置加载测试：
 
-## 10. 目录参考
+```bash
+cargo test example_config_load_test -- --nocapture
+```
+
+## 8. 目录参考
 
 ```text
 src/
-  app_config/          # 配置模型与反序列化
-  factory/             # Inbound/Outbound 工厂
-  socks/               # Socks5 协议与入站实现
-  ethan/               # Ethan 协议与入/出站
-  Direct.rs           # 直连出站
-  dns_resolver.rs      # DNS 解析工具
-  main.rs              # 程序入口
+  app_config/      # 配置模型与反序列化
+  factory/         # Inbound/Outbound 工厂
+  socks/           # Socks5 协议与入站实现
+  ethan/           # Ethan 协议与入/出站
+  direct.rs        # 直连出站
+  dns_resolver.rs  # DNS 解析
+  geoip_helper.rs  # GeoIP 查询
+  main.rs          # 程序入口
 examples/config/
   client.toml
   server.toml
+  client.json
+  server.json
 ```
