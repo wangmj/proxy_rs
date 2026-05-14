@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -19,7 +19,7 @@ use crate::{
     ProxyError,
     app_config::EthanOutBoundConfig,
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
-    traits::{async_read_write::AsyncReadWrite, proxy_outbound::OutBoundProxy},
+    traits::proxy_outbound::{AsyncReadWriteStream, OutBoundProxy},
     utils,
 };
 
@@ -38,14 +38,15 @@ impl OutBoundProxy for EthanOutBound {
     async fn connect_server(
         &self,
         connect_request: ConnectRequest,
-    ) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
+    ) -> Result<AsyncReadWriteStream> {
         let connector = EthanOutBoundConnector::new(self.config.clone(), connect_request).await?;
         connector.build_connect().await
     }
 }
+
 struct EthanOutBoundConnector {
     config: Arc<EthanOutBoundConfig>,
-    stream: TcpStream,
+    stream: AsyncReadWriteStream,
     connect_request: ConnectRequest,
 }
 impl EthanOutBoundConnector {
@@ -55,16 +56,18 @@ impl EthanOutBoundConnector {
     ) -> Result<Self> {
         let addr = config.socket_addr().await?;
         let stream = TcpStream::connect(addr).await?;
+        let stream = Box::pin(stream) as Pin<_>;
         Ok(Self {
             config,
             stream,
             connect_request,
         })
     }
-    pub async fn build_connect(mut self) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
+    pub async fn build_connect(mut self) -> Result<AsyncReadWriteStream> {
+        self.wraptls().await?;
         self.auth_request().await?;
         self.bind_request().await?;
-        self.wraptls().await
+        Ok(self.stream)
     }
 
     async fn auth_request(&mut self) -> Result<()> {
@@ -73,15 +76,17 @@ impl EthanOutBoundConnector {
         let auth_request =
             AuthRequest::new(self.config.uid().to_string(), self.config.pwd().to_string());
         let auth_bytes = auth_request.into_bytes();
-        self.stream.write_u8(auth_bytes.len() as u8).await?;
-        self.stream.write_all(&auth_bytes).await?;
-        self.stream.flush().await?;
+
+        let locked_stream = &mut self.stream;
+        locked_stream.write_u8(auth_bytes.len() as u8).await?;
+        locked_stream.write_all(&auth_bytes).await?;
+        locked_stream.flush().await?;
 
         log::trace!("ethan client had send auth info to server, and then wait server");
 
-        let len = self.stream.read_u8().await? as usize;
+        let len = locked_stream.read_u8().await? as usize;
         let mut buff = vec![0u8; len];
-        self.stream.read_exact(&mut buff).await?;
+        locked_stream.read_exact(&mut buff).await?;
 
         log::trace!("ethan client received server auth response");
 
@@ -102,12 +107,14 @@ impl EthanOutBoundConnector {
 
     async fn bind_request(&mut self) -> Result<()> {
         let ccmd_bytes = self.connect_request.as_bytes();
-        self.stream.write_u8(ccmd_bytes.len() as u8).await?;
-        self.stream.write_all(&ccmd_bytes).await?;
 
-        let len = self.stream.read_u8().await?;
+        let locked_stream = &mut self.stream;
+        locked_stream.write_u8(ccmd_bytes.len() as u8).await?;
+        locked_stream.write_all(&ccmd_bytes).await?;
+
+        let len = locked_stream.read_u8().await?;
         let mut buff = vec![0u8; len as usize];
-        self.stream.read_exact(&mut buff).await?;
+        locked_stream.read_exact(&mut buff).await?;
         let response = EthanResponse::try_from(&buff[..])?;
         if response.res() {
             Ok(())
@@ -121,7 +128,7 @@ impl EthanOutBoundConnector {
         }
     }
 
-    async fn wraptls(self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
+    async fn wraptls(&mut self) -> Result<()> {
         let tls_config = self.config.tls();
         if let Some(tls_config) = tls_config {
             log::trace!("client start wrap tls");
@@ -148,15 +155,17 @@ impl EthanOutBoundConnector {
             let server_name =
                 ServerName::try_from(domain_name.to_string()).expect("domain name is incorrect");
 
+            //使用mem::replace换出原来的tcpStream，避免后面修改已借用的值。
+            //还有一种方法，使用Option+take
+            let old_stream = std::mem::replace(&mut self.stream, Box::pin(tokio::io::empty()));
             let stream = connector
-                .connect(server_name, self.stream)
+                .connect(server_name, old_stream)
                 .await
                 .map_err(ProxyError::TlsHandshakeError)?;
+            self.stream = Box::pin(stream);
 
             log::trace!("client wrap straem with tls success!");
-            Ok(Box::new(stream) as Box<_>)
-        } else {
-            Ok(Box::new(self.stream) as Box<_>)
         }
+        Ok(())
     }
 }

@@ -2,6 +2,7 @@ use std::{
     io::BufReader,
     net::SocketAddr,
     path::Path,
+    pin::Pin,
     sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
@@ -21,7 +22,10 @@ use crate::{
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     factory::outbound_factory::OutBoundFactory,
     shutdown_listener,
-    traits::{async_read_write::AsyncReadWrite, proxy_inbound::InBoundProxy},
+    traits::{
+        async_read_write::AsyncReadWrite, proxy_inbound::InBoundProxy,
+        proxy_outbound::AsyncReadWriteStream,
+    },
     utils::expand_path,
 };
 
@@ -61,7 +65,7 @@ impl InBoundProxy for EthanInBound {
                         let config = self.config.clone();
                         joinsets.spawn(async move {
                             ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            
+
                             let connector = EthanInBoundConnector::new(stream, addr, config);
                             tokio::select!{
                                  _=shutdown.recv()=>{
@@ -69,6 +73,7 @@ impl InBoundProxy for EthanInBound {
                                 },
                                 res=connector.handlstream()=> {
                                      if let Err(err) = res{
+
                                          log::error!("ethan inbound handle stream occur exception, {err}");
                                      }
                                 }
@@ -109,14 +114,14 @@ fn print_active_connections() {
 }
 
 struct EthanInBoundConnector {
-    stream: TcpStream,
+    stream: AsyncReadWriteStream,
     remote_addr: SocketAddr,
     config: Arc<EthanInBoundConfig>,
 }
 impl EthanInBoundConnector {
     fn new(stream: TcpStream, remote_addr: SocketAddr, config: Arc<EthanInBoundConfig>) -> Self {
         Self {
-            stream,
+            stream: Box::pin(stream),
             remote_addr,
             config,
         }
@@ -124,18 +129,24 @@ impl EthanInBoundConnector {
 
     async fn handlstream(mut self) -> Result<()> {
         log::trace!("ethan server rev connect, remote :{:?}", self.remote_addr);
+        self.wraptls().await?;
         self.auth_handle().await?;
         let mut out_stream = self.bind_handle().await?;
-        let mut stream = self.wraptls().await?;
 
-        match tokio::io::copy_bidirectional(&mut *stream, &mut out_stream).await {
+        match tokio::io::copy_bidirectional(&mut self.stream, &mut out_stream).await {
             Ok((n, m)) => {
                 log::trace!("copied {}:{} bites", n, m);
                 Ok(())
             }
             Err(err) => {
-                log::error!("data transfer broken out with error: {}", err);
-                Err(err.into())
+                let err_str = err.to_string();
+                if err_str.contains("close_notify") || err_str.contains("unexpected-eof") {
+                    log::debug!("{}", err);
+                    Ok(())
+                } else {
+                    log::error!("data transfer broken out with error: {}", err);
+                    Err(err.into())
+                }
             }
         }
     }
@@ -177,7 +188,7 @@ impl EthanInBoundConnector {
         result
     }
 
-    async fn bind_handle(&mut self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
+    async fn bind_handle(&mut self) -> Result<Pin<Box<dyn AsyncReadWrite>>> {
         let len = self.stream.read_u8().await? as usize;
         let mut buff = vec![0u8; len];
         self.stream.read_exact(&mut buff).await?;
@@ -204,18 +215,20 @@ impl EthanInBoundConnector {
         result
     }
 
-    async fn wraptls(self) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
+    async fn wraptls(&mut self) -> Result<()> {
         match self.config.tls() {
-            None => Ok(Box::new(self.stream) as Box<_>),
+            None => Ok(()),
             Some(tls_config) => {
                 log::trace!("server start wrap tls!");
 
                 let config =
                     get_tsl_server_config(&tls_config.crt_path, &tls_config.key_path).await?;
                 let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-                let accept = acceptor.accept(self.stream).await?;
+                let old_stream = std::mem::replace(&mut self.stream, Box::pin(tokio::io::empty()));
+                let accept = acceptor.accept(old_stream).await?;
                 log::trace!("server  wrap stream with tls success!");
-                Ok(Box::new(accept) as Box<_>)
+                self.stream = Box::pin(accept);
+                Ok(())
             }
         }
     }

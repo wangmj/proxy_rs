@@ -1,4 +1,7 @@
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::{
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+};
 
 use crate::{
     dns_resolver::resolve_dns_pick_fastet,
@@ -16,7 +19,7 @@ impl OutBoundProxy for Direct {
     async fn connect_server(
         &self,
         connect_request: ConnectRequest,
-    ) -> Result<Box<dyn AsyncReadWrite + Unpin + Send>> {
+    ) -> Result<Pin<Box<dyn AsyncReadWrite>>> {
         let port = connect_request.port();
         let stream = match connect_request.dst_type() {
             DstType::Ipv4(ipv4_addr) => {
@@ -30,6 +33,6 @@ impl OutBoundProxy for Direct {
                 TcpStream::connect(SocketAddr::new(ipaddr, port)).await?
             }
         };
-        Ok(Box::new(stream))
+        Ok(Box::pin(stream))
     }
 }

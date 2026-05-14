@@ -84,7 +84,7 @@ impl InBoundProxy for Socks5InBound {
                                     }
                                 }
                             }
-                            
+
                             ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         });
                     }
@@ -107,13 +107,13 @@ impl InBoundProxy for Socks5InBound {
     }
 }
 
-fn print_active_connections(){
-    let mut interval= tokio::time::interval(Duration::from_secs(5));
+fn print_active_connections() {
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
     tokio::spawn(async move {
-        loop{
-            let _= interval.tick().await;
-            let count= ACTIVE_CONNECTIONS.load(std::sync::atomic::Ordering::Relaxed);
-            log::info!("Active connection: {}",count);
+        loop {
+            let _ = interval.tick().await;
+            let count = ACTIVE_CONNECTIONS.load(std::sync::atomic::Ordering::Relaxed);
+            log::info!("Active connection: {}", count);
         }
     });
 }
@@ -203,7 +203,7 @@ impl Socks5InBoundHanlder {
         match cmd {
             Cmd::Connect => {
                 let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request).await?;
-                
+
                 match OutBoundFactory::get(&outbound_config)
                     .connect_server(connect_request)
                     .await
@@ -305,7 +305,14 @@ where
         Ok(n) => {
             log::trace!("copied {}:{} bites", n.0, n.1);
         }
-        Err(err) => log::warn!("copied occured error, {}", err),
+        Err(err) => {
+            let err_str = err.to_string();
+            if err_str.contains("close_notify") || err_str.contains("unexpected-eof") {
+                log::debug!("{err_str}");
+            } else {
+                log::warn!("copied occured error, {}", err)
+            }
+        }
     }
 }
 
