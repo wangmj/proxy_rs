@@ -36,11 +36,7 @@ pub struct Socks5InBound {
 impl Socks5InBound {
     pub fn new(config: Arc<SocksInBoundConfig>, dns_config: Arc<DnsConfig>) -> Self {
         let shutdown_rev = shutdown_listener();
-        Self {
-            config,
-            dns_config,
-            shutdown_rev,
-        }
+        Self { config, dns_config, shutdown_rev }
     }
 }
 
@@ -53,9 +49,7 @@ impl InBoundProxy for Socks5InBound {
             .expect("failed to start listen");
         log::info!(
             "socks5 start listening on port:{}",
-            listener
-                .local_addr()
-                .expect("failed get local addr on socks5")
+            listener.local_addr().expect("failed get local addr on socks5")
         );
         print_active_connections();
         let mut shutdown_listener = self.shutdown_rev.resubscribe();
@@ -75,7 +69,7 @@ impl InBoundProxy for Socks5InBound {
 
                             let mut handler = Socks5InBoundHanlder::new(stream, config, dns_config);
                             tokio::select!{
-                                _=shutdown.recv()=>{
+                                 _=shutdown.recv()=>{
                                     log::info!("had recv close signal, can't process new connection");
                                 },
                                 res=handler.handlestream()=>{
@@ -126,11 +120,7 @@ struct Socks5InBoundHanlder {
 
 impl Socks5InBoundHanlder {
     fn new(stream: TcpStream, in_conf: Arc<SocksInBoundConfig>, dns_conf: Arc<DnsConfig>) -> Self {
-        Self {
-            stream,
-            inbound_config: in_conf,
-            dns_config: dns_conf,
-        }
+        Self { stream, inbound_config: in_conf, dns_config: dns_conf }
     }
     async fn handlestream(&mut self) -> Result<()> {
         self.auth_handle().await?;
@@ -160,17 +150,12 @@ impl Socks5InBoundHanlder {
             .into());
         }
         let auth_methods_from_client: Vec<_> = buff.iter().map(AuthMethod::from).collect();
-        log::trace!(
-            "client support auth methods:{:?}",
-            &auth_methods_from_client
-        );
+        log::trace!("client support auth methods:{:?}", &auth_methods_from_client);
         let support_auth = get_both_auth_method(&auth_methods_from_client)
             .ok_or(ProxyError::Socks5NoSupportAuthMethod)?;
         log::trace!("final authmethod:{:?}", support_auth);
 
-        self.stream
-            .write_all(&[SOCKS_VERSION, (*support_auth).into()])
-            .await?;
+        self.stream.write_all(&[SOCKS_VERSION, (*support_auth).into()]).await?;
 
         match support_auth {
             AuthMethod::NoAuth => Ok(()),
@@ -204,10 +189,7 @@ impl Socks5InBoundHanlder {
             Cmd::Connect => {
                 let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request).await?;
 
-                match OutBoundFactory::get(&outbound_config)
-                    .connect_server(connect_request)
-                    .await
-                {
+                match OutBoundFactory::get(&outbound_config).connect_server(connect_request).await {
                     Ok(mut outbound_stream) => {
                         response_builder.rep(SocksResponseType::Success);
                         let response = response_builder.build();
@@ -242,8 +224,7 @@ async fn valid_socks_ver(stream: &mut TcpStream) -> Result<()> {
 
 //socks5 user pwd认证
 async fn user_pwd_auth(
-    handler: &mut TcpStream,
-    inbound_config: Arc<SocksInBoundConfig>,
+    handler: &mut TcpStream, inbound_config: Arc<SocksInBoundConfig>,
 ) -> Result<()> {
     let send_result = async |handler: &mut TcpStream, res: bool| {
         match res {
@@ -317,10 +298,8 @@ where
 }
 
 fn get_both_auth_method(client_auth_methods: &[AuthMethod]) -> Option<&AuthMethod> {
-    let mut v: Vec<_> = client_auth_methods
-        .iter()
-        .filter(|&am| SERVER_SUPPORTED_AUTHS.contains(am))
-        .collect();
+    let mut v: Vec<_> =
+        client_auth_methods.iter().filter(|&am| SERVER_SUPPORTED_AUTHS.contains(am)).collect();
     v.sort_by(|&x, &y| y.cmp(x));
     match v.first() {
         Some(&am) => Some(am),

@@ -39,10 +39,7 @@ pub struct EthanInBound {
 impl EthanInBound {
     pub fn new(config: Arc<EthanInBoundConfig>) -> Self {
         let shutdown_rev = shutdown_listener();
-        Self {
-            config,
-            shutdown_rev,
-        }
+        Self { config, shutdown_rev }
     }
 }
 
@@ -50,9 +47,7 @@ impl EthanInBound {
 impl InBoundProxy for EthanInBound {
     async fn start(&self) {
         let port = self.config.port();
-        let listener = TcpListener::bind(("0.0.0.0", port))
-            .await
-            .expect("failed to start listen");
+        let listener = TcpListener::bind(("0.0.0.0", port)).await.expect("failed to start listen");
         let mut joinsets = JoinSet::new();
         log::info!("ethan server start listening at port: {}", port);
         print_active_connections();
@@ -120,11 +115,7 @@ struct EthanInBoundConnector {
 }
 impl EthanInBoundConnector {
     fn new(stream: TcpStream, remote_addr: SocketAddr, config: Arc<EthanInBoundConfig>) -> Self {
-        Self {
-            stream: Box::pin(stream),
-            remote_addr,
-            config,
-        }
+        Self { stream: Box::pin(stream), remote_addr, config }
     }
 
     async fn handlstream(mut self) -> Result<()> {
@@ -195,10 +186,8 @@ impl EthanInBoundConnector {
         let request = ConnectRequest::try_from(buff.as_slice())?;
         log::trace!("received connect server: {:?}", request);
 
-        let output_config = APP_CONFIG
-            .get_forward_to_remote(&request)
-            .await
-            .expect("未找到匹配的路由");
+        let output_config =
+            APP_CONFIG.get_forward_to_remote(&request).await.expect("未找到匹配的路由");
         let output_bound = OutBoundFactory::get(&output_config);
         let (response, result) = match output_bound.connect_server(request).await {
             Ok(out_stream) => {
@@ -237,18 +226,12 @@ impl EthanInBoundConnector {
 async fn get_tsl_server_config(crt_path: &Path, key_path: &Path) -> Result<ServerConfig> {
     let crt_path_expanded = expand_path(crt_path);
     if !crt_path_expanded.exists() {
-        return Err(anyhow!(
-            "crt path not found: {}",
-            crt_path_expanded.display()
-        ));
+        return Err(anyhow!("crt path not found: {}", crt_path_expanded.display()));
     }
 
     let key_path_expanded = expand_path(key_path);
     if !key_path_expanded.exists() {
-        return Err(anyhow!(
-            "key path not found: {}",
-            key_path_expanded.display()
-        ));
+        return Err(anyhow!("key path not found: {}", key_path_expanded.display()));
     }
     let fullchain = tokio::fs::File::open(crt_path_expanded).await?;
     let mut cert_reader = BufReader::new(fullchain.into_std().await);
@@ -258,16 +241,11 @@ async fn get_tsl_server_config(crt_path: &Path, key_path: &Path) -> Result<Serve
         certs.push(ct);
     }
 
-    let key = tokio::fs::File::open(key_path_expanded)
-        .await?
-        .into_std()
-        .await;
+    let key = tokio::fs::File::open(key_path_expanded).await?.into_std().await;
     let mut key_reader = BufReader::new(key);
     let priv_key = rustls_pemfile::private_key(&mut key_reader)?;
     let priv_key = priv_key.ok_or_else(|| anyhow!("not found private key"))?;
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, priv_key)?;
+    let config = ServerConfig::builder().with_no_client_auth().with_single_cert(certs, priv_key)?;
     Ok(config)
 }
 

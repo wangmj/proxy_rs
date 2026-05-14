@@ -1,0 +1,14 @@
+version = "Two"
+use_small_heuristics = "Max"
+merge_derives = true
+use_field_init_shorthand = true
+unsafe_style = "Forced"
+fn_args_layout = "Compressed"
+wrap_comments = true
+comment_width = 100
+
+# 👇 下面这一行是修复 tokio::select! 格式化的关键！
+macro_rules = true
+
+# 👇 强制格式化 select! 内部代码
+format_strings = true
