@@ -9,13 +9,16 @@ use proxy_rs::{APP_CONFIG, factory::inbound_factory::InBoundFactory};
 // #[tokio::main]
 fn main() -> io::Result<()> {
     program_init();
-    let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(), APP_CONFIG.dns().clone());
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
         .max_blocking_threads(512) // default value
         .build()?;
-    runtime.block_on(inbound.start());
+    runtime.block_on(async {
+        let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(), APP_CONFIG.dns().clone());
+        inbound.start().await;
+    });
     Ok(())
 }
 //整体的初始化

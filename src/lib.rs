@@ -15,6 +15,7 @@ use std::fmt::{Debug, Display};
 // pub use app_config::app_config::{APP_CONFIG, AppConfig};
 pub use app_config::config::*;
 pub use app_config::*;
+use tokio::sync::broadcast::Receiver;
 
 #[derive(Debug)]
 pub enum ProxyError {
@@ -66,3 +67,16 @@ impl Display for ProxyError {
 }
 
 impl std::error::Error for ProxyError {}
+
+
+pub fn shutdown_listener() -> Receiver<()> {
+    let (sender, rev) = tokio::sync::broadcast::channel(1);
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to listen ctrl+c");
+        log::info!("shutdown......");
+        let _ = sender.send(());
+    });
+    rev
+}

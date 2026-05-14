@@ -98,6 +98,9 @@ impl AppConfig {
         }
         let target_dst_type = connect_request.dst_type();
         let route = self.routes().get_match(target_dst_type).await;
+        
+        log::debug!("get outbound: {}",route.to());
+
         self.outbounds()
             .iter()
             .find(|x| x.eq_name_ignore_case(route.to()))

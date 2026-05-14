@@ -56,10 +56,13 @@ fn get_dns_resolver() -> Resolver<GenericConnector<TokioRuntimeProvider>> {
                 log::error!(
                     r#"因配置的dns 服务器 格式不正确，无法使用，转而使用系统的，正确格式例子:["8.8.8.8:53","8.8.8.8"]"#
                 );
-                opts.use_hosts_file = hickory_resolver::config::ResolveHosts::Auto;
+                opts.use_hosts_file = hickory_resolver::config::ResolveHosts::Always;
             }
         }
-        _ => {}
+        _ => {
+            (resolver_config,opts)=hickory_resolver::system_conf::read_system_conf().expect("failed read system dns config");
+            // opts.use_hosts_file = hickory_resolver::config::ResolveHosts::Always;
+        }
     }
     Resolver::builder_with_config(resolver_config, TokioConnectionProvider::default())
         .with_options(opts)

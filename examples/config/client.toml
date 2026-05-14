@@ -1,5 +1,5 @@
 [log]
-access.level = "trace"
+access.level = "debug"
 access.path = "log/access.log"
 error.path = "/var/log/rs_proxy/error.log"
 
@@ -11,10 +11,10 @@ pwd="test"
 
 [dns]
 resolver = "local"
-server = ["8.8.8.8"]
+server = [] #这个server在此处要为空，因为域名：dev.ubuntu是配置在local host文件中，所以必须使用local进行解析
 
 [[outbounds]]
-name = "ethan"
+name = "proxy"
 protocol = "ethan"
 uid = "ethan.wang"
 pwd = "pass01!"
@@ -30,20 +30,20 @@ crt_path = "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
 name = "direct"
 protocol = "direct"
 
-[[routes]]
-to = "direct"
-rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
-rule_type = "CIDR"
+# [[routes]]
+# to = "direct"
+# rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+# rule_type = "CIDR"
 
-[[routes]]
-to = "direct"
-rule = "CN"
-rule_type = "GeoIP:country"
+# [[routes]]
+# to = "direct"
+# rule = "CN"
+# rule_type = "GeoIP:country"
 
-[[routes]]
-to = "direct"
-rule = "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967"
-rule_type = "GeoIP:asn"
+# [[routes]]
+# to = "direct"
+# rule = "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967"
+# rule_type = "GeoIP:asn"
 
 [[routes]]
 to = "proxy"

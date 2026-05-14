@@ -2,7 +2,8 @@ use std::{
     io::BufReader,
     net::SocketAddr,
     path::Path,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicUsize},
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
@@ -10,6 +11,8 @@ use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::broadcast::Receiver,
+    task::JoinSet,
 };
 use tokio_rustls::rustls::ServerConfig;
 
@@ -17,17 +20,25 @@ use crate::{
     APP_CONFIG, EthanInBoundConfig, ProxyError,
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     factory::outbound_factory::OutBoundFactory,
+    shutdown_listener,
     traits::{async_read_write::AsyncReadWrite, proxy_inbound::InBoundProxy},
     utils::expand_path,
 };
 
+static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+
 pub struct EthanInBound {
     config: Arc<EthanInBoundConfig>,
+    shutdown_rev: Receiver<()>,
 }
 
 impl EthanInBound {
     pub fn new(config: Arc<EthanInBoundConfig>) -> Self {
-        Self { config }
+        let shutdown_rev = shutdown_listener();
+        Self {
+            config,
+            shutdown_rev,
+        }
     }
 }
 
@@ -38,18 +49,65 @@ impl InBoundProxy for EthanInBound {
         let listener = TcpListener::bind(("0.0.0.0", port))
             .await
             .expect("failed to start listen");
+        let mut joinsets = JoinSet::new();
         log::info!("ethan server start listening at port: {}", port);
-        while let Ok((stream, addr)) = listener.accept().await {
-            let config = self.config.clone();
-            tokio::spawn(async move {
-                let connector = EthanInBoundConnector::new(stream, addr, config);
-                if let Err(err) = connector.handlstream().await {
-                    log::error!("ethan inbound handle stream occur exception, {err}");
+        print_active_connections();
+        loop {
+            let mut shutdown = self.shutdown_rev.resubscribe();
+
+            tokio::select! {
+                res=listener.accept()=> {
+                    if let Ok((stream, addr)) =res{
+                        let config = self.config.clone();
+                        joinsets.spawn(async move {
+                            ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            
+                            let connector = EthanInBoundConnector::new(stream, addr, config);
+                            tokio::select!{
+                                 _=shutdown.recv()=>{
+                                    log::info!("stop connector");
+                                },
+                                res=connector.handlstream()=> {
+                                     if let Err(err) = res{
+                                         log::error!("ethan inbound handle stream occur exception, {err}");
+                                     }
+                                }
+                            }
+                            ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                });
                 }
-            });
+            },
+            _=shutdown.recv()=>{
+                log::info!("stop listener");
+                break;
+            }
+            }
+        }
+
+        log::info!("wait for all connection stop");
+
+        match tokio::time::timeout(Duration::from_secs(5), joinsets.join_all()).await {
+            Ok(_) => {
+                log::info!("all connection had closed");
+            }
+            Err(_) => {
+                log::error!("wait for connection timeout, will shutdown force..");
+            }
         }
     }
 }
+
+fn print_active_connections() {
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    tokio::spawn(async move {
+        loop {
+            let _ = interval.tick().await;
+            let count = ACTIVE_CONNECTIONS.load(std::sync::atomic::Ordering::Relaxed);
+            log::info!("Active connection: {}", count);
+        }
+    });
+}
+
 struct EthanInBoundConnector {
     stream: TcpStream,
     remote_addr: SocketAddr,
@@ -152,7 +210,8 @@ impl EthanInBoundConnector {
             Some(tls_config) => {
                 log::trace!("server start wrap tls!");
 
-                let config = get_tsl_server_config(&tls_config.crt_path, &tls_config.key_path).await?;
+                let config =
+                    get_tsl_server_config(&tls_config.crt_path, &tls_config.key_path).await?;
                 let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
                 let accept = acceptor.accept(self.stream).await?;
                 log::trace!("server  wrap stream with tls success!");
@@ -186,7 +245,10 @@ async fn get_tsl_server_config(crt_path: &Path, key_path: &Path) -> Result<Serve
         certs.push(ct);
     }
 
-    let key = tokio::fs::File::open(key_path_expanded).await?.into_std().await;
+    let key = tokio::fs::File::open(key_path_expanded)
+        .await?
+        .into_std()
+        .await;
     let mut key_reader = BufReader::new(key);
     let priv_key = rustls_pemfile::private_key(&mut key_reader)?;
     let priv_key = priv_key.ok_or_else(|| anyhow!("not found private key"))?;

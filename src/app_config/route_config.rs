@@ -13,7 +13,6 @@ use crate::{APP_CONFIG, dns_resolver, ethan::ethan_proto::DstType, geoip_helper:
 static DEFAULT_ROUTE_CONFIG: LazyLock<RouteConfig> =
     LazyLock::new(|| RouteConfig::new("*".to_string(), "Direct", RuleType::Default));
 
-
 #[derive(Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
 pub struct RouteManager(Vec<RouteConfig>);
@@ -30,20 +29,19 @@ impl RouteManager {
         }
     }
 
-
-    pub(crate) async fn get_match(
-        &self,
-        dst: &DstType,
-    ) -> &RouteConfig {
-       let t= match dst {
-            DstType::Ipv4(ip) => self.get_match_ip(&Into::<IpAddr>::into(*ip) ),
+    pub(crate) async fn get_match(&self, dst: &DstType) -> &RouteConfig {
+        let t = match dst {
+            DstType::Ipv4(ip) => self.get_match_ip(&Into::<IpAddr>::into(*ip)),
             DstType::Ipv6(ip) => self.get_match_ip(&Into::<IpAddr>::into(*ip)),
-            DstType::DomainName(name) => {
-                self.get_match_domain_name(name).await
-            }
+            DstType::DomainName(name) => self.get_match_domain_name(name).await,
         };
-
-       t.unwrap_or_else(||&DEFAULT_ROUTE_CONFIG)
+        t.unwrap_or(self.get_default_config())
+    }
+    fn get_default_config(&self) -> &RouteConfig {
+        self.0
+            .iter()
+            .find(|&x| x.rule_type().eq(&RuleType::Default))
+            .unwrap()
     }
     fn get_match_ip(&self, ip: &IpAddr) -> Option<&RouteConfig> {
         self.0
@@ -214,7 +212,7 @@ mod test {
 
     #[tokio::test]
     #[ignore = "1.该测试依赖本地文件examples/config/client.toml中的配置，且当配置中的dns.resolver=local时，会触发在线的dns解析，耗时较长，因此仅在需要时测试"]
-   async  fn routes_match() {
+    async fn routes_match() {
         let mut routes = Vec::new();
         routes.push(RouteConfig::new(
             "*.google.com",
@@ -257,6 +255,16 @@ mod test {
         let bing_dst = DstType::DomainName("www.baidu.com".into());
         let bing_dst_match = manager.get_match(&bing_dst).await;
         assert_eq!(bing_dst_match.to(), "direct");
+    }
+
+    #[tokio::test]
+    async fn routes_match_proxy() {
+        let mut routes = Vec::new();
+        routes.push(RouteConfig::new("*", "proxy", RuleType::Default));
+        let manager = RouteManager::from(routes);
+        let dst = DstType::DomainName("cn.bing.com".into());
+        let to_config = manager.get_match(&dst).await;
+        assert_eq!(to_config.to(), "proxy");
     }
 
     #[test]

@@ -1,12 +1,17 @@
-use std::sync::Arc;
+use std::{
+    sync::{Arc, atomic::AtomicUsize},
+    time::Duration,
+};
 
 use anyhow::Result;
 
-use crate::{ProxyError, dns_config::DnsConfig};
+use crate::{ProxyError, dns_config::DnsConfig, shutdown_listener};
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::broadcast::Receiver,
+    task::JoinSet,
 };
 
 use crate::{
@@ -20,15 +25,22 @@ use crate::{
     traits::proxy_inbound::InBoundProxy,
 };
 
+static ACTIVE_CONNECTIONS: AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 ///socks代理入口
 pub struct Socks5InBound {
     config: Arc<SocksInBoundConfig>,
     dns_config: Arc<DnsConfig>,
+    shutdown_rev: Receiver<()>,
 }
 
 impl Socks5InBound {
     pub fn new(config: Arc<SocksInBoundConfig>, dns_config: Arc<DnsConfig>) -> Self {
-        Self { config, dns_config }
+        let shutdown_rev = shutdown_listener();
+        Self {
+            config,
+            dns_config,
+            shutdown_rev,
+        }
     }
 }
 
@@ -45,24 +57,66 @@ impl InBoundProxy for Socks5InBound {
                 .local_addr()
                 .expect("failed get local addr on socks5")
         );
+        print_active_connections();
+        let mut shutdown_listener = self.shutdown_rev.resubscribe();
+        let mut joinsets = JoinSet::new();
         loop {
-            if let Ok((stream, addr)) = listener.accept().await {
-                log::info!("received stream from addr:{}", &addr);
+            tokio::select! {
+                res=listener.accept() =>{
+                    if let Ok((stream, addr))=res{
+                         log::debug!("received stream from addr:{}", &addr);
 
-                let config = self.config.clone();
-                let dns_config = self.dns_config.clone();
+                        let config = self.config.clone();
+                        let dns_config = self.dns_config.clone();
+                        let mut shutdown=self.shutdown_rev.resubscribe();
 
-                tokio::spawn(async move {
-                    let mut handler = Socks5InBoundHanlder::new(stream, config, dns_config);
-                    if let Err(err) = handler.handlestream().await {
-                        log::error!("Socks5 handle stream failed, inner error: {}", err);
+                        joinsets.spawn(async move {
+                            ACTIVE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                            let mut handler = Socks5InBoundHanlder::new(stream, config, dns_config);
+                            tokio::select!{
+                                _=shutdown.recv()=>{
+                                    log::info!("had recv close signal, can't process new connection");
+                                },
+                                res=handler.handlestream()=>{
+                                    if let Err(err)=res{
+                                        log::error!("Socks5 handle stream failed, inner error: {}", err);
+                                    }
+                                }
+                            }
+                            
+                            ACTIVE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                        });
                     }
-                });
+            },
+                _=shutdown_listener.recv()=>{
+                    log::info!("stop listener...");
+                    break;
+                }
+            }
+        }
+
+        match tokio::time::timeout(Duration::from_secs(5), joinsets.join_all()).await {
+            Ok(_) => {
+                log::info!("all connection had closed");
+            }
+            Err(_) => {
+                log::error!("wait for connection timeout, will shutdown force..");
             }
         }
     }
 }
 
+fn print_active_connections(){
+    let mut interval= tokio::time::interval(Duration::from_secs(5));
+    tokio::spawn(async move {
+        loop{
+            let _= interval.tick().await;
+            let count= ACTIVE_CONNECTIONS.load(std::sync::atomic::Ordering::Relaxed);
+            log::info!("Active connection: {}",count);
+        }
+    });
+}
 #[allow(unused)]
 struct Socks5InBoundHanlder {
     stream: TcpStream,
@@ -149,7 +203,7 @@ impl Socks5InBoundHanlder {
         match cmd {
             Cmd::Connect => {
                 let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request).await?;
-
+                
                 match OutBoundFactory::get(&outbound_config)
                     .connect_server(connect_request)
                     .await
@@ -236,7 +290,7 @@ async fn user_pwd_auth(
     }
 
     send_result(handler, true).await?;
-    log::info!("socks5 auth success!");
+    log::debug!("socks5 auth success!");
 
     Ok(())
 }
@@ -246,7 +300,7 @@ where
     A: AsyncRead + AsyncWrite + Unpin + ?Sized,
     B: AsyncRead + AsyncWrite + Unpin + ?Sized,
 {
-    log::trace!("starting transfer data");
+    log::debug!("starting transfer data");
     match tokio::io::copy_bidirectional(in_stream, out_stream).await {
         Ok(n) => {
             log::trace!("copied {}:{} bites", n.0, n.1);
