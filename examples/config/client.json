@@ -12,24 +12,51 @@
     "protocol": "socks5",
     "port": 1080
   },
-  "outbound": {
-    "protocol": "ethan",
-    "uid": "ethan.wang",
-    "pwd": "pass01!",
-    "port": 10800,
-    "addr": "dev.ubuntu",
-    "tls": {
-      "use_tls": true,
-      "domain_name": "dev.ubuntu",
-      "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
+  "outbounds": [
+    {
+      "name": "proxy",
+      "protocol": "ethan",
+      "uid": "ethan.wang",
+      "pwd": "pass01!",
+      "port": 10800,
+      "addr": "dev.ubuntu",
+      "tls": {
+        "use_tls": true,
+        "domain_name": "dev.ubuntu",
+        "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
+      }
     },
-    "dns": {
-      "resolver": "local",
-      "server": ["8.8.8.8"]
+    {
+      "protocol": "direct",
+      "name": "direct"
     }
+  ],
+  "dns": {
+    "resolver": "local",
+    "server": [
+      "8.8.8.8"
+    ]
   },
-  "route": {
-    "domain": ["(^|\\.)google\\.com$", "^github\\.com$"],
-    "ip": ["^1\\.1\\.1\\.1$", "^8\\.8\\.8\\.[0-9]{1,3}$", "^2001:db8:.*"]
-  }
+  "routes": [
+    {
+      "to": "direct",
+      "rule": "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
+      "rule_type": "CIDR"
+    },
+    {
+      "to": "direct",
+      "rule": "CN",
+      "rule_type": "GeoIP:country"
+    },
+    {
+      "to": "direct",
+      "rule": "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+      "rule_type": "GeoIP:asn"
+    },
+    {
+      "to": "proxy",
+      "rule": "*",
+      "rule_type": "default"
+    }
+  ]
 }

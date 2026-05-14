@@ -1,57 +1,78 @@
-use super::inbound_config::*;
-use super::outbound_config::*;
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
+use std::sync::Arc;
 use std::{env, path::Path, sync::LazyLock};
 
-use crate::log_config::LogConfig;
-use crate::route_config::RouteManager;
-use crate::{ethan::ethan_proto::ConnectRequest, start_args::StartArgs};
-pub static APP_CONFIG: LazyLock<AppConfig> = LazyLock::new(get_app_config_from_args);
+use super::dns_config::DnsConfig;
+use super::inbound_config::*;
+use super::log_config::LogConfig;
+use super::outbound_config::*;
+use super::route_config::RouteManager;
 
-fn get_app_config_from_args() -> AppConfig {
-    let args = StartArgs::parse();
-    let config_path = match args.config() {
-        Some(path) => path.clone(),
-        None => {
-            let current_dir = env::current_dir().expect("get current directory failed!");
-            current_dir.join("config.toml")
-        }
-    };
-    let config_content =
-        std::fs::read_to_string(&config_path).expect("read config content failed!");
-    AppConfig::parse_with_file_type(&config_content, &config_path)
-        .expect("config format is incorrect.")
+use crate::{ethan::ethan_proto::ConnectRequest, start_args::StartArgs};
+
+pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(get_app_config_from_args);
+
+fn get_app_config_from_args() -> Arc<AppConfig> {
+    #[cfg(not(test))]
+    {
+        let args = StartArgs::parse();
+        let config_path = match args.config() {
+            Some(path) => path.clone(),
+            None => {
+                let current_dir = env::current_dir().expect("get current directory failed!");
+                current_dir.join("config.toml")
+            }
+        };
+        AppConfig::open_readfile(config_path)
+            .expect("read config failed!")
+            .into()
+    }
+    #[cfg(test)]
+    {
+        let cur_dir = env::current_dir().expect("get current directory failed!");
+        let config_path = cur_dir.join("examples/config/client.toml");
+        AppConfig::open_readfile(config_path)
+            .expect("read config failed!")
+            .into()
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct AppConfig {
     log: LogConfig,
-    #[serde(deserialize_with = "deserialize_protocol")]
-    inbound: InBoundTypeConfig,
+    // #[serde(deserialize_with = "deserialize_protocol")]
+    inbound: Arc<InBoundTypeConfig>,
     // #[serde(deserialize_with = "deserialize_outbounds")]
     outbounds: Vec<OutBoundTypeConfig>,
     // #[serde(default)]
-    routes: RouteManager,
+    routes: Arc<RouteManager>,
+    #[serde(default)]
+    dns: Arc<DnsConfig>,
 }
 impl AppConfig {
-    pub fn parse_with_file_type(content: &str, config_path: &Path) -> Result<Self> {
+    pub fn open_readfile(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config_path = config_path.as_ref();
         let ext = config_path
             .extension()
             .and_then(|x| x.to_str())
             .map(|x| x.to_ascii_lowercase());
 
+        let config_content: String = std::fs::read_to_string(config_path)?;
+
         match ext.as_deref() {
-            Some("json") => parse_json(content),
-            Some("toml") => parse_toml(content),
+            Some("json") => parse_json(&config_content),
+            Some("toml") => parse_toml(&config_content),
             // Backward-compatible fallback for files with custom/no extension.
-            _ => parse_toml(content),
+            _ => parse_toml(&config_content),
         }
     }
-    pub fn inbound(&self) -> &InBoundTypeConfig {
+
+    pub fn inbound(&self) -> &Arc<InBoundTypeConfig> {
         &self.inbound
     }
+
     pub fn outbounds(&self) -> &[OutBoundTypeConfig] {
         &self.outbounds
     }
@@ -60,11 +81,13 @@ impl AppConfig {
         &self.log
     }
 
-    pub fn routes(&self) -> &RouteManager {
+    pub fn routes(&self) -> &Arc<RouteManager> {
         &self.routes
     }
-
-    pub(crate) fn get_forward_to_remote(
+    pub fn dns(&self) -> &Arc<DnsConfig> {
+        &self.dns
+    }
+    pub(crate) async fn get_forward_to_remote(
         &self,
         connect_request: &ConnectRequest,
     ) -> Result<OutBoundTypeConfig> {
@@ -74,7 +97,10 @@ impl AppConfig {
             return Err(anyhow!("需要至少有一个路由选项"));
         }
         let target_dst_type = connect_request.dst_type();
-        let route = self.routes().get_match(target_dst_type);
+        let route = self.routes().get_match(target_dst_type).await;
+        
+        log::debug!("get outbound: {}",route.to());
+
         self.outbounds()
             .iter()
             .find(|x| x.eq_name_ignore_case(route.to()))
@@ -96,9 +122,13 @@ fn parse_json(content: &str) -> Result<AppConfig> {
 #[cfg(test)]
 mod test {
 
-    use std::{net::Ipv4Addr, path::PathBuf, str::FromStr};
+    use std::{net::Ipv4Addr, ops::Deref, path::PathBuf, str::FromStr};
 
-    use crate::{ethan::ethan_proto::DstType, route_config::RouteConfig};
+    use crate::{
+        app_config::dns_config::DNSResolver,
+        ethan::ethan_proto::DstType,
+        route_config::{RouteConfig, RuleType},
+    };
 
     use super::*;
     use anyhow::Result;
@@ -111,12 +141,13 @@ mod test {
         [inbound]
         protocol = "socks5"
         port = 1080
-        [inbound.dns]
+        
+        [dns]
         resolver = "local"
         server=["8.8.8.8"]
 
         [[outbounds]]
-        name="ethan"
+        name="proxy"
         protocol = "ethan"
         uid = "u"
         pwd = "p"
@@ -133,24 +164,24 @@ mod test {
         protocol="direct"
 
         [[routes]]
-        to = "ethan"
-        rule = "*.google.com"
-        rule_type = "domain"
-
-        [[routes]]
-        to = "ethan"
-        rule = "192.168.100.*"
-        rule_type = "ipv4"
-
-        [[routes]]
-        to = "ethan"
-        rule = "^github\\.$"
-        rule_type = "regex"
+        to = "direct"
+        rule = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+        rule_type = "CIDR"
 
         [[routes]]
         to = "direct"
+        rule = "CN"
+        rule_type = "GeoIP:country"
+
+        [[routes]]
+        to = "direct"
+        rule = "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967"
+        rule_type = "GeoIP:asn"
+
+        [[routes]]
+        to = "proxy"
         rule = "*"
-        rule_type = "wildcard"
+        rule_type = "default"
         "##;
 
     #[test]
@@ -168,14 +199,15 @@ mod test {
             resolver: DNSResolver::Local,
             server: Some(["8.8.8.8".into()].to_vec()),
         };
-        let socks_input_config = SocksInBoundConfig::new(1080, None, None, dns_config);
+        assert_eq!(appconfig.dns().deref(), &dns_config);
+        let socks_input_config = SocksInBoundConfig::new(1080, None, None);
         assert_eq!(
-            appconfig.inbound,
-            InBoundTypeConfig::Socks5(socks_input_config)
+            appconfig.inbound().deref(),
+            &InBoundTypeConfig::Socks5(socks_input_config)
         );
 
         let ethan_output_config = EthanOutBoundConfig::new(
-            "ethan".into(),
+            "proxy".into(),
             "127.0.0.1".into(),
             10800,
             "u".into(),
@@ -212,15 +244,15 @@ mod test {
   },
   "inbound": {
     "protocol": "socks5",
-    "port": 1080,
-    "dns":{
+    "port": 1080
+  },
+  "dns":{
       "resolver":"local",
       "server":["8.8.8.8"]
-    }
-  },
+    },
   "outbounds": [
     {
-      "name": "ethan",
+      "name": "proxy",
       "protocol": "ethan",
       "uid": "u",
       "pwd": "p",
@@ -230,12 +262,6 @@ mod test {
         "use_tls": true,
         "domain_name": "dev.ubuntu",
         "crt_path": "~/DevSpace/certs/dev.ubuntu.crt"
-      },
-      "dns": {
-        "resolver": "local",
-        "server": [
-          "8.8.8.8"
-        ]
       }
     },
     {
@@ -244,25 +270,25 @@ mod test {
     }
   ],
   "routes": [
-    {
-      "to": "ethan",
-      "rule": "*.google.com",
-      "rule_type": "Domain"
-    },
-    {
-      "to": "ethan",
-      "rule": "192.168.100.*",
-      "rule_type": "Ipv4"
-    },
-    {
-      "to": "ethan",
-      "rule": "^github\\.$",
-      "rule_type": "Regex"
+     {
+      "to": "direct",
+      "rule": "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
+      "rule_type": "CIDR"
     },
     {
       "to": "direct",
-      "rule": "*",
-      "rule_type": "Wildcard"
+      "rule": "CN",
+      "rule_type": "GeoIP:country"
+    },
+    {
+      "to": "direct",
+      "rule": "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+      "rule_type": "GeoIP:asn"
+    },
+    {
+      "to":"proxy",
+      "rule":"*",
+      "rule_type":"default"
     }
   ]
 }"##;
@@ -282,14 +308,16 @@ mod test {
             resolver: DNSResolver::Local,
             server: Some(["8.8.8.8".into()].to_vec()),
         };
-        let socks_input_config = SocksInBoundConfig::new(1080, None, None, dns_config);
+        assert_eq!(*appconfig.dns().deref(), dns_config);
+
+        let socks_input_config = SocksInBoundConfig::new(1080, None, None);
         assert_eq!(
-            appconfig.inbound,
-            InBoundTypeConfig::Socks5(socks_input_config)
+            appconfig.inbound().deref(),
+            &InBoundTypeConfig::Socks5(socks_input_config)
         );
 
         let ethan_output_config = EthanOutBoundConfig::new(
-            "ethan".into(),
+            "proxy".into(),
             "127.0.0.1".into(),
             10800,
             "u".into(),
@@ -311,53 +339,73 @@ mod test {
 
         assert_eq!(appconfig.routes().len(), 4);
         assert_eq!(
-            appconfig.routes(),
+            appconfig.routes().deref(),
             &RouteManager::new([
                 RouteConfig::new(
-                    "*.google.com",
-                    "ethan",
-                    crate::route_config::RuleType::Domain
+                    "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
+                    "direct",
+                    RuleType::Cidr
                 ),
+                RouteConfig::new("CN", "direct", RuleType::GeoipCountry),
                 RouteConfig::new(
-                    "192.168.100.*",
-                    "ethan",
-                    crate::route_config::RuleType::Ipv4
+                    "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+                    "direct",
+                    RuleType::Geoipasn
                 ),
-                RouteConfig::new("^github\\.$", "ethan", crate::route_config::RuleType::Regex),
-                RouteConfig::new("*", "direct", crate::route_config::RuleType::Wildcard),
+                RouteConfig::new("*", "proxy", RuleType::Default),
             ])
         );
         Ok(())
     }
 
-    #[test]
-    fn appconfig_get_outbound_test() -> Result<()> {
+    #[tokio::test]
+    #[ignore="该测试依赖网络，会触发在线的dns解析，耗时较长，因此仅在需要时测试"]
+    async fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
-        let direct_outbound_config =
-            OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
+        let direct_outbound_config = OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
 
-        let bing_request = ConnectRequest::new(1090, DstType::DomainName("cn.bing.com".into()));
-        let get_outbound_config = appconfig.get_forward_to_remote(&bing_request)?;
+        let baidu_request = ConnectRequest::new(443, DstType::DomainName("www.baidu.com".into()));
+        let get_outbound_config: OutBoundTypeConfig =
+            appconfig.get_forward_to_remote(&baidu_request).await?;
         assert_eq!(get_outbound_config, direct_outbound_config);
 
         let ipv4_request = ConnectRequest::new(
             443,
             DstType::Ipv4(Ipv4Addr::from_octets([192, 168, 100, 100])),
         );
-        let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request)?;
-        if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
-            assert_eq!(ethan_config.name(), "ethan");
+        let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request).await?;
+        if let OutBoundTypeConfig::Direct(_direct) = get_outbound_config {
         } else {
-            return Err(anyhow!("ipv4,should be ethan OutBoundType"));
+            return Err(anyhow!("local ip should be a direct route"));
         }
 
         let domain_request = ConnectRequest::new(443, DstType::DomainName("www.google.com".into()));
-        let get_outbound_config = appconfig.get_forward_to_remote(&domain_request)?;
+        let get_outbound_config = appconfig.get_forward_to_remote(&domain_request).await?;
         if let OutBoundTypeConfig::Ethan(ethan_config) = get_outbound_config {
-            assert_eq!(ethan_config.name(), "ethan");
+            assert_eq!(ethan_config.name(), "proxy");
         } else {
             return Err(anyhow!("google.com .should be ethan OutBoundType"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn example_config_load_test() -> Result<()> {
+        let mut base_dir = env::current_dir()?;
+        base_dir.push("examples/config");
+        let client_json_file = base_dir.join("client.json");
+        let client_toml_file = base_dir.join("client.toml");
+        let server_json_file = base_dir.join("server.json");
+        let server_toml_file = base_dir.join("server.toml");
+
+        let _ = AppConfig::open_readfile(client_json_file)?;
+        println!("client json file correct!");
+        let _ = AppConfig::open_readfile(client_toml_file)?;
+        println!("client toml file correct!");
+        let _ = AppConfig::open_readfile(server_json_file)?;
+        println!("server json file correct!");
+        let _ = AppConfig::open_readfile(server_toml_file)?;
+        println!("server json file correct!");
         Ok(())
     }
 }

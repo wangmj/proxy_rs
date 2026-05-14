@@ -20,7 +20,7 @@
       "domain_name": "dev.ubuntu"
     }
   },
-  "outbound": [
+  "outbounds": [
     {
       "protocol": "direct",
       "name": "direct"
@@ -30,7 +30,7 @@
     {
       "to": "direct",
       "rule": "*",
-      "rule_type":"rule_type"
+      "rule_type":"default"
     }
   ]
 }

@@ -1,10 +1,20 @@
+use std::{collections::HashSet, sync::LazyLock};
+
 use bytes::BufMut;
-use anyhow::anyhow;
 
-pub(crate) const SERVER_SUPPORTED_AUTHS: [AuthMethod; 2] = [AuthMethod::NoAuth, AuthMethod::UserPwd];
-pub const SOCKS_VERSION: u8 = 0x05;
+use crate::ProxyError;
 
-#[derive(Debug, PartialEq, Clone, Copy, PartialOrd, Eq, Ord)]
+// pub(crate) const SERVER_SUPPORTED_AUTHS: [AuthMethod; 2] = [AuthMethod::NoAuth, AuthMethod::UserPwd];
+pub static SOCKS_VERSION: u8 = 0x05;
+
+pub(crate) static SERVER_SUPPORTED_AUTHS: LazyLock<HashSet<AuthMethod>> = LazyLock::new(|| {
+    let mut methods = HashSet::with_capacity(2);
+    methods.insert(AuthMethod::NoAuth);
+    methods.insert(AuthMethod::UserPwd);
+    methods
+});
+
+#[derive(Debug, PartialEq, Clone, Copy, PartialOrd, Eq, Ord, Hash)]
 pub(crate) enum AuthMethod {
     NoAuth = 0x00,
     Gssapi = 0x01,
@@ -23,7 +33,7 @@ impl From<u8> for AuthMethod {
         }
     }
 }
-impl From<&u8> for AuthMethod{
+impl From<&u8> for AuthMethod {
     fn from(value: &u8) -> Self {
         AuthMethod::from(*value)
     }
@@ -47,13 +57,13 @@ pub(crate) enum Cmd {
     Udp,
 }
 impl TryFrom<u8> for Cmd {
-    type Error = anyhow::Error;
+    type Error = ProxyError;
     fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
         match value {
             0x01 => Ok(Self::Connect),
             0x02 => Ok(Self::Bind),
             0x03 => Ok(Self::Udp),
-            _ => Err(anyhow!("unknown cmd")),
+            _ => Err(ProxyError::Socks5CmdParseError(value)),
         }
     }
 }
@@ -121,12 +131,12 @@ impl SocksResponse {
         res.put_u8(self.rep.into());
         res.put_u8(self.rsv);
         res.put_u8(self.atyp.into());
-        match self.atyp{
-            SocksAddressType::Ipv4|SocksAddressType::Ipv6 =>  res.put(&self.dst_addr[..]),
+        match self.atyp {
+            SocksAddressType::Ipv4 | SocksAddressType::Ipv6 => res.put(&self.dst_addr[..]),
             SocksAddressType::Domain => {
                 res.put_u8(self.dst_addr.len() as u8);
-                 res.put(&self.dst_addr[..]);
-            },
+                res.put(&self.dst_addr[..]);
+            }
             //SocksAddressType::Ipv6 => todo!(),
         }
         res.put_u16(self.dst_port);
