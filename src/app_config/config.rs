@@ -1,6 +1,7 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
+use json_comments::StripComments;
 use std::sync::Arc;
 use std::{env, path::Path, sync::LazyLock};
 
@@ -115,7 +116,8 @@ fn parse_toml(content: &str) -> Result<AppConfig> {
 }
 
 fn parse_json(content: &str) -> Result<AppConfig> {
-    serde_json::from_str::<AppConfig>(content)
+    let stripped= StripComments::new(content.as_bytes());
+    serde_json::from_reader(stripped)
         .map_err(|e| anyhow!(format!("failed to parse json, err: {}", e)))
 }
 
@@ -155,8 +157,6 @@ mod test {
         addr = "127.0.0.1"
 
         [outbounds.tls]
-        use_tls = true
-        domain_name="dev.ubuntu"
         crt_path="~/DevSpace/certs/dev.ubuntu.crt"
 
         [[outbounds]]
@@ -213,8 +213,6 @@ mod test {
             "u".into(),
             "p".into(),
             Some(TlsClientConfig {
-                use_tls: true,
-                domain_name: "dev.ubuntu".into(),
                 crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
             }),
         );
@@ -259,8 +257,6 @@ mod test {
       "port": 10800,
       "addr": "127.0.0.1",
       "tls": {
-        "use_tls": true,
-        "domain_name": "dev.ubuntu",
         "crt_path": "~/DevSpace/certs/dev.ubuntu.crt"
       }
     },
@@ -323,8 +319,6 @@ mod test {
             "u".into(),
             "p".into(),
             Some(TlsClientConfig {
-                use_tls: true,
-                domain_name: "dev.ubuntu".into(),
                 crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
             }),
         );

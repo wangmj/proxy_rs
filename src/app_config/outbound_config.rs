@@ -17,12 +17,12 @@ pub enum OutBoundTypeConfig {
 impl OutBoundTypeConfig {
     pub fn eq_name_ignore_case(&self, name: impl AsRef<str>) -> bool {
         match self {
-            OutBoundTypeConfig::Ethan(ethan_out_bound_config) => ethan_out_bound_config
-                .name
-                .eq_ignore_ascii_case(name.as_ref()),
-            OutBoundTypeConfig::Direct(direct_output_config) => direct_output_config
-                .name
-                .eq_ignore_ascii_case(name.as_ref()),
+            OutBoundTypeConfig::Ethan(ethan_out_bound_config) => {
+                ethan_out_bound_config.name.eq_ignore_ascii_case(name.as_ref())
+            }
+            OutBoundTypeConfig::Direct(direct_output_config) => {
+                direct_output_config.name.eq_ignore_ascii_case(name.as_ref())
+            }
         }
     }
 }
@@ -38,21 +38,10 @@ pub struct EthanOutBoundConfig {
 }
 impl EthanOutBoundConfig {
     pub fn new(
-        name: String,
-        addr: String,
-        port: u16,
-        uid: String,
-        pwd: String,
+        name: String, addr: String, port: u16, uid: String, pwd: String,
         tls: Option<TlsClientConfig>,
     ) -> Self {
-        Self {
-            name,
-            addr,
-            port,
-            uid,
-            pwd,
-            tls,
-        }
+        Self { name, addr, port, uid, pwd, tls }
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -65,6 +54,9 @@ impl EthanOutBoundConfig {
     }
     pub fn tls(&self) -> &Option<TlsClientConfig> {
         &self.tls
+    }
+    pub fn addr(&self)->&str{
+        &self.addr
     }
     pub async fn socket_addr(&self) -> Result<SocketAddr> {
         let ipaddr: IpAddr = if let Ok(ipv4) = self.addr.parse::<Ipv4Addr>() {
@@ -90,8 +82,8 @@ impl DirectOutputConfig {
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct TlsClientConfig {
-    pub use_tls: bool,
-    pub domain_name: String,
+    // pub use_tls: bool,
+    // pub domain_name: String,
     pub crt_path: PathBuf, //如果是信任的密钥，则可以忽略
 }
 
@@ -110,8 +102,6 @@ mod test {
             addr = "127.0.0.1"
 
             [tls]
-            use_tls = true
-            domain_name="dev.ubuntu"
             crt_path="~/DevSpace/certs/dev.ubuntu.crt""#,
         )?;
         if let OutBoundTypeConfig::Ethan(ethan_out_config) = outbound_config {
@@ -122,7 +112,6 @@ mod test {
             assert_eq!("127.0.0.1", ethan_out_config.addr);
             assert!(ethan_out_config.tls().is_some());
             if let Some(tls_config) = ethan_out_config.tls() {
-                assert_eq!("dev.ubuntu", tls_config.domain_name);
                 assert_eq!(
                     "~/DevSpace/certs/dev.ubuntu.crt",
                     tls_config.crt_path.display().to_string()

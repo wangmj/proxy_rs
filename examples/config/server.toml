@@ -4,16 +4,16 @@ access.path = "log/access.log"
 error.path = "/var/log/rs_proxy/error.log"
 
 
-[inbound]
-protocol = "ethan"
+[inbound] #入站配置
+protocol = "ethan" 
 port = 10800
-uid = "ethan.wang"
-pwd = "pass01!"
+uid = "" #服务端认证密码，需要与客户端保持一致
+pwd = "" #服务端认证用户，需要与客户端保持一致
 
-[inbound.tls]
-crt_path = "localhost.crt"
-key_path = "localhost.key"
-domain_name = "localhost"
+[inbound.tls] #服务端tls配置，推荐使用tls进行加密，防止被封
+crt_path = "" #公钥证书链文件路径
+key_path = "" #私钥文件路径
+domain_name = "" #域名
 
 [[outbounds]]
 name="direct"

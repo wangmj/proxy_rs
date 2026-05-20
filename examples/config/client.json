@@ -3,59 +3,57 @@
     "access": {
       "level": "trace",
       "path": "log/access.log"
-    },
-    "error": {
-      "path": "/var/log/rs_proxy/error.log"
     }
   },
+  // 入站配置
   "inbound": {
     "protocol": "socks5",
     "port": 1080
   },
   "outbounds": [
     {
-      "name": "proxy",
-      "protocol": "ethan",
-      "uid": "ethan.wang",
-      "pwd": "pass01!",
-      "port": 10800,
-      "addr": "dev.ubuntu",
+      "name": "proxy", //需要与routes中的to对应
+      "protocol": "ethan", //协议名称，只支持socks5和ethan
+      "uid": "", //服务端认证用户，需要与服务端一致
+      "pwd": "", //服务端认证密码，需要与服务端一致
+      "port": 10800, //服务端监听端口
+      "addr": "dev.ubuntu", //服务端地址，如果使用tls，则必须填写域名
       "tls": {
-        "use_tls": true,
-        "domain_name": "dev.ubuntu",
-        "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt"
+        "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt" //服务端tls根证书，如果为系统内已经导入的可信根证书，则不填
       }
     },
     {
-      "protocol": "direct",
+      "protocol": "direct", //直接转发
       "name": "direct"
     }
   ],
   "dns": {
+    //值：local、remote。 local:在本地解析域名，remote：在服务端解析
     "resolver": "local",
+    //域名解析的dns服务地址，如果为空则使用系统的。
     "server": [
       "8.8.8.8"
     ]
   },
   "routes": [
     {
-      "to": "direct",
-      "rule": "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16",
-      "rule_type": "CIDR"
+      "to": "direct", //转发到哪个outbound
+      "rule": "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16", //匹配规则
+      "rule_type": "CIDR" //匹配类型CIDR、GeoIP:country、GeoIP:asn、default。 CIDR：IP地址区间，
     },
     {
       "to": "direct",
-      "rule": "CN",
+      "rule": "CN", //GeoIp:country GeoIp的国家码，多个国家码以逗号分隔
       "rule_type": "GeoIP:country"
     },
     {
       "to": "direct",
-      "rule": "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967",
+      "rule": "AS4134,AS4837,AS9808,AS24153,AS37963,AS45090,AS136907,AS38355,AS55967", //GeoIp:asn GeoIp的asn码，多个码以逗号分隔
       "rule_type": "GeoIP:asn"
     },
     {
       "to": "proxy",
-      "rule": "*",
+      "rule": "*", //匹配任何类型
       "rule_type": "default"
     }
   ]

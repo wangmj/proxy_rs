@@ -3,26 +3,23 @@
     "access": {
       "level": "info",
       "path": "log/server_access.log"
-    },
-    "error": {
-      "path": "/var/log/rx_proxy/error.log"
     }
   },
   "inbound": {
-    "protocol": "ethan",
-    "port": 10800,
-    "uid": "ethan.wang",
-    "pwd": "pass01!",
+    "protocol": "ethan",//入站类型
+    "port": 10800,//服务端监听端口
+    "uid": "",//服务端认证用户
+    "pwd": "",//服务单认证密码
     "tls": {
-      "use_tls": true,
-      "crt_path": "./server.dev.ubuntu.crt",
-      "key_path": "./server.dev.ubuntu.key",
-      "domain_name": "dev.ubuntu"
+      "crt_path": "",//服务端tls证书 认证连+公钥路径
+      "key_path": "",//服务端tls 私钥路径
+      "domain_name": ""//服务端域名地址
     }
   },
+  //出站
   "outbounds": [
     {
-      "protocol": "direct",
+      "protocol": "direct", 
       "name": "direct"
     }
   ],

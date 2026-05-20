@@ -36,8 +36,7 @@ impl EthanOutBound {
 #[async_trait]
 impl OutBoundProxy for EthanOutBound {
     async fn connect_server(
-        &self,
-        connect_request: ConnectRequest,
+        &self, connect_request: ConnectRequest,
     ) -> Result<AsyncReadWriteStream> {
         let connector = EthanOutBoundConnector::new(self.config.clone(), connect_request).await?;
         connector.build_connect().await
@@ -51,17 +50,12 @@ struct EthanOutBoundConnector {
 }
 impl EthanOutBoundConnector {
     pub async fn new(
-        config: Arc<EthanOutBoundConfig>,
-        connect_request: ConnectRequest,
+        config: Arc<EthanOutBoundConfig>, connect_request: ConnectRequest,
     ) -> Result<Self> {
         let addr = config.socket_addr().await?;
         let stream = TcpStream::connect(addr).await?;
         let stream = Box::pin(stream) as Pin<_>;
-        Ok(Self {
-            config,
-            stream,
-            connect_request,
-        })
+        Ok(Self { config, stream, connect_request })
     }
     pub async fn build_connect(mut self) -> Result<AsyncReadWriteStream> {
         self.wraptls().await?;
@@ -133,18 +127,20 @@ impl EthanOutBoundConnector {
         if let Some(tls_config) = tls_config {
             log::trace!("client start wrap tls");
 
-            let domain_name = &tls_config.domain_name;
+            let domain_name = self.config.addr();
             let mut root_cert_store =
                 RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-            let tls_crt_path = utils::expand_path(&tls_config.crt_path);
-            if tls_crt_path.exists() {
-                let reader = tokio::fs::File::open(&tls_config.crt_path)
-                    .await?
-                    .into_std()
-                    .await;
-                let cert = CertificateDer::from_pem_reader(reader)?;
-                root_cert_store.add(cert)?;
+            if !&tls_config.crt_path.as_os_str().is_empty() {
+                let tls_crt_path = utils::expand_path(&tls_config.crt_path);
+                if tls_crt_path.exists() {
+                    let reader =
+                        tokio::fs::File::open(&tls_config.crt_path).await?.into_std().await;
+                    let cert = CertificateDer::from_pem_reader(reader)?;
+                    root_cert_store.add(cert)?;
+                }else{
+                    log::warn!("文件：{} 不存在",&tls_config.crt_path.display());
+                }
             }
 
             let config = rustls::ClientConfig::builder()
