@@ -26,17 +26,13 @@ fn get_app_config_from_args() -> Arc<AppConfig> {
                 current_dir.join("config.toml")
             }
         };
-        AppConfig::open_readfile(config_path)
-            .expect("read config failed!")
-            .into()
+        AppConfig::open_readfile(config_path).expect("read config failed!").into()
     }
     #[cfg(test)]
     {
         let cur_dir = env::current_dir().expect("get current directory failed!");
         let config_path = cur_dir.join("examples/config/client.toml");
-        AppConfig::open_readfile(config_path)
-            .expect("read config failed!")
-            .into()
+        AppConfig::open_readfile(config_path).expect("read config failed!").into()
     }
 }
 
@@ -55,10 +51,7 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn open_readfile(config_path: impl AsRef<Path>) -> Result<Self> {
         let config_path = config_path.as_ref();
-        let ext = config_path
-            .extension()
-            .and_then(|x| x.to_str())
-            .map(|x| x.to_ascii_lowercase());
+        let ext = config_path.extension().and_then(|x| x.to_str()).map(|x| x.to_ascii_lowercase());
 
         let config_content: String = std::fs::read_to_string(config_path)?;
 
@@ -89,8 +82,7 @@ impl AppConfig {
         &self.dns
     }
     pub(crate) async fn get_forward_to_remote(
-        &self,
-        connect_request: &ConnectRequest,
+        &self, connect_request: &ConnectRequest,
     ) -> Result<OutBoundTypeConfig> {
         // Keep backward compatibility: if no route rules are configured,
         // all requests still use the configured outbound.
@@ -99,8 +91,8 @@ impl AppConfig {
         }
         let target_dst_type = connect_request.dst_type();
         let route = self.routes().get_match(target_dst_type).await;
-        
-        log::debug!("get outbound: {}",route.to());
+
+        log::debug!("get outbound: {}", route.to());
 
         self.outbounds()
             .iter()
@@ -116,7 +108,7 @@ fn parse_toml(content: &str) -> Result<AppConfig> {
 }
 
 fn parse_json(content: &str) -> Result<AppConfig> {
-    let stripped= StripComments::new(content.as_bytes());
+    let stripped = StripComments::new(content.as_bytes());
     serde_json::from_reader(stripped)
         .map_err(|e| anyhow!(format!("failed to parse json, err: {}", e)))
 }
@@ -155,8 +147,6 @@ mod test {
         pwd = "p"
         port = 10800
         addr = "127.0.0.1"
-
-        [outbounds.tls]
         crt_path="~/DevSpace/certs/dev.ubuntu.crt"
 
         [[outbounds]]
@@ -187,24 +177,13 @@ mod test {
     #[test]
     fn app_config_parse_toml_test() -> Result<()> {
         let appconfig = parse_toml(TOML_CONFIG)?;
-        assert_eq!(
-            appconfig.log.level().unwrap(),
-            log::Level::from_str("info")?
-        );
-        assert_eq!(
-            appconfig.log.access_path(),
-            PathBuf::from("/tmp/access.log")
-        );
-        let dns_config = DnsConfig {
-            resolver: DNSResolver::Local,
-            server: Some(["8.8.8.8".into()].to_vec()),
-        };
+        assert_eq!(appconfig.log.level().unwrap(), log::Level::from_str("info")?);
+        assert_eq!(appconfig.log.access_path(), PathBuf::from("/tmp/access.log"));
+        let dns_config =
+            DnsConfig { resolver: DNSResolver::Local, server: Some(["8.8.8.8".into()].to_vec()) };
         assert_eq!(appconfig.dns().deref(), &dns_config);
         let socks_input_config = SocksInBoundConfig::new(1080, None, None);
-        assert_eq!(
-            appconfig.inbound().deref(),
-            &InBoundTypeConfig::Socks5(socks_input_config)
-        );
+        assert_eq!(appconfig.inbound().deref(), &InBoundTypeConfig::Socks5(socks_input_config));
 
         let ethan_output_config = EthanOutBoundConfig::new(
             "proxy".into(),
@@ -212,9 +191,7 @@ mod test {
             10800,
             "u".into(),
             "p".into(),
-            Some(TlsClientConfig {
-                crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
-            }),
+            Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
         );
         let direct_output_config = DirectOutputConfig::new("direct");
         assert_eq!(
@@ -256,9 +233,7 @@ mod test {
       "pwd": "p",
       "port": 10800,
       "addr": "127.0.0.1",
-      "tls": {
-        "crt_path": "~/DevSpace/certs/dev.ubuntu.crt"
-      }
+      "crt_path": "~/DevSpace/certs/dev.ubuntu.crt"
     },
     {
       "name": "direct",
@@ -292,25 +267,14 @@ mod test {
     #[test]
     fn app_config_parse_json_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
-        assert_eq!(
-            appconfig.log.level().unwrap(),
-            log::Level::from_str("info")?
-        );
-        assert_eq!(
-            appconfig.log.access_path(),
-            PathBuf::from("/tmp/access.log")
-        );
-        let dns_config = DnsConfig {
-            resolver: DNSResolver::Local,
-            server: Some(["8.8.8.8".into()].to_vec()),
-        };
+        assert_eq!(appconfig.log.level().unwrap(), log::Level::from_str("info")?);
+        assert_eq!(appconfig.log.access_path(), PathBuf::from("/tmp/access.log"));
+        let dns_config =
+            DnsConfig { resolver: DNSResolver::Local, server: Some(["8.8.8.8".into()].to_vec()) };
         assert_eq!(*appconfig.dns().deref(), dns_config);
 
         let socks_input_config = SocksInBoundConfig::new(1080, None, None);
-        assert_eq!(
-            appconfig.inbound().deref(),
-            &InBoundTypeConfig::Socks5(socks_input_config)
-        );
+        assert_eq!(appconfig.inbound().deref(), &InBoundTypeConfig::Socks5(socks_input_config));
 
         let ethan_output_config = EthanOutBoundConfig::new(
             "proxy".into(),
@@ -318,9 +282,7 @@ mod test {
             10800,
             "u".into(),
             "p".into(),
-            Some(TlsClientConfig {
-                crt_path: "~/DevSpace/certs/dev.ubuntu.crt".into(),
-            }),
+            Some("~/DevSpace/certs/dev.ubuntu.crt".into()),
         );
         let direct_output_config = DirectOutputConfig::new("direct");
         assert_eq!(
@@ -353,7 +315,7 @@ mod test {
     }
 
     #[tokio::test]
-    #[ignore="该测试依赖网络，会触发在线的dns解析，耗时较长，因此仅在需要时测试"]
+    #[ignore = "该测试依赖网络，会触发在线的dns解析，耗时较长，因此仅在需要时测试"]
     async fn appconfig_get_outbound_test() -> Result<()> {
         let appconfig = parse_json(JSONCONIFG)?;
         let direct_outbound_config = OutBoundTypeConfig::Direct(DirectOutputConfig::new("direct"));
@@ -363,10 +325,8 @@ mod test {
             appconfig.get_forward_to_remote(&baidu_request).await?;
         assert_eq!(get_outbound_config, direct_outbound_config);
 
-        let ipv4_request = ConnectRequest::new(
-            443,
-            DstType::Ipv4(Ipv4Addr::from_octets([192, 168, 100, 100])),
-        );
+        let ipv4_request =
+            ConnectRequest::new(443, DstType::Ipv4(Ipv4Addr::from_octets([192, 168, 100, 100])));
         let get_outbound_config = appconfig.get_forward_to_remote(&ipv4_request).await?;
         if let OutBoundTypeConfig::Direct(_direct) = get_outbound_config {
         } else {

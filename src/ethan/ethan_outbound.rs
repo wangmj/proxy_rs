@@ -124,22 +124,22 @@ impl EthanOutBoundConnector {
 
     async fn wraptls(&mut self) -> Result<()> {
         let tls_config = self.config.tls();
-        if let Some(tls_config) = tls_config {
+        if let Some(crt_path) = tls_config {
             log::trace!("client start wrap tls");
 
             let domain_name = self.config.addr();
             let mut root_cert_store =
                 RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-            if !&tls_config.crt_path.as_os_str().is_empty() {
-                let tls_crt_path = utils::expand_path(&tls_config.crt_path);
+            if !&crt_path.as_os_str().is_empty() {
+                let tls_crt_path = utils::expand_path(crt_path);
                 if tls_crt_path.exists() {
                     let reader =
-                        tokio::fs::File::open(&tls_config.crt_path).await?.into_std().await;
+                        tokio::fs::File::open(&crt_path).await?.into_std().await;
                     let cert = CertificateDer::from_pem_reader(reader)?;
                     root_cert_store.add(cert)?;
                 }else{
-                    log::warn!("文件：{} 不存在",&tls_config.crt_path.display());
+                    log::warn!("文件：{} 不存在",&crt_path.display());
                 }
             }
 

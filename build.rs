@@ -35,7 +35,7 @@ fn copy_dir_all(src_path:impl AsRef<Path>,dest_path:&Path)->Result<(),Box<dyn Er
         
         if filetype.is_dir(){
             println!("file type is dir, entry path: {}",entry.path().display());
-            copy_dir_all(&entry.path(),dest_file_path)?;
+            copy_dir_all(entry.path(),dest_file_path)?;
         }else{
             eprintln!("{}",entry.path().display());
             fs::copy(entry.path(), dest_file_path)?;

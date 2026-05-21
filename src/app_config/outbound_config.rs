@@ -6,7 +6,6 @@ use std::{
 use crate::dns_resolver::resolve_dns_pick_fastet;
 
 use anyhow::Result;
-use serde::Deserialize;
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]
 #[serde(tag = "protocol", rename_all = "lowercase")]
 pub enum OutBoundTypeConfig {
@@ -34,14 +33,14 @@ pub struct EthanOutBoundConfig {
     port: u16,
     uid: String,
     pwd: String,
-    tls: Option<TlsClientConfig>,
+    crt_path: Option<PathBuf>,//如果是信任的公开证书，则可以忽略
 }
 impl EthanOutBoundConfig {
     pub fn new(
         name: String, addr: String, port: u16, uid: String, pwd: String,
-        tls: Option<TlsClientConfig>,
+        crt_path: Option<PathBuf>,
     ) -> Self {
-        Self { name, addr, port, uid, pwd, tls }
+        Self { name, addr, port, uid, pwd, crt_path }
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -52,8 +51,8 @@ impl EthanOutBoundConfig {
     pub fn pwd(&self) -> &str {
         &self.pwd
     }
-    pub fn tls(&self) -> &Option<TlsClientConfig> {
-        &self.tls
+    pub fn tls(&self) -> &Option<PathBuf> {
+        &self.crt_path
     }
     pub fn addr(&self)->&str{
         &self.addr
@@ -80,12 +79,6 @@ impl DirectOutputConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-pub struct TlsClientConfig {
-    // pub use_tls: bool,
-    // pub domain_name: String,
-    pub crt_path: PathBuf, //如果是信任的密钥，则可以忽略
-}
 
 #[cfg(test)]
 mod test {
@@ -100,8 +93,6 @@ mod test {
             pwd = "p"
             port = 10800
             addr = "127.0.0.1"
-
-            [tls]
             crt_path="~/DevSpace/certs/dev.ubuntu.crt""#,
         )?;
         if let OutBoundTypeConfig::Ethan(ethan_out_config) = outbound_config {
@@ -111,10 +102,10 @@ mod test {
             assert_eq!(10800, ethan_out_config.port);
             assert_eq!("127.0.0.1", ethan_out_config.addr);
             assert!(ethan_out_config.tls().is_some());
-            if let Some(tls_config) = ethan_out_config.tls() {
+            if let Some(crt_path) = ethan_out_config.tls() {
                 assert_eq!(
                     "~/DevSpace/certs/dev.ubuntu.crt",
-                    tls_config.crt_path.display().to_string()
+                    crt_path.display().to_string()
                 );
             }
         } else {
