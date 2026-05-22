@@ -1,6 +1,5 @@
 use anyhow::Result;
 use anyhow::anyhow;
-use clap::Parser;
 use json_comments::StripComments;
 use std::sync::Arc;
 use std::{env, path::Path, sync::LazyLock};
@@ -11,13 +10,15 @@ use super::log_config::LogConfig;
 use super::outbound_config::*;
 use super::route_config::RouteManager;
 
-use crate::{ethan::ethan_proto::ConnectRequest, start_args::StartArgs};
+use crate::ethan::ethan_proto::ConnectRequest;
 
 pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(get_app_config_from_args);
 
 fn get_app_config_from_args() -> Arc<AppConfig> {
     #[cfg(not(test))]
     {
+        use crate::start_args::StartArgs;
+        use clap::Parser;
         let args = StartArgs::parse();
         let config_path = match args.config() {
             Some(path) => path.clone(),
