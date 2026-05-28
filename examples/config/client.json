@@ -18,9 +18,7 @@
       "pwd": "", //服务端认证密码，需要与服务端一致
       "port": 10800, //服务端监听端口
       "addr": "dev.ubuntu", //服务端地址，如果使用tls，则必须填写域名
-      "tls": {
-        "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt" //服务端tls根证书，如果为系统内已经导入的可信根证书，则不填
-      }
+      "crt_path": "/Users/mingjie/DevSpace/certs/dev.ubuntu.crt" //服务端tls根证书，如果为系统内已经导入的可信根证书，则不填，但该行必须存在，不存在的话则会被认为不使用tls
     },
     {
       "protocol": "direct", //直接转发
