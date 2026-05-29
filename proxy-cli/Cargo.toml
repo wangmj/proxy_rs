@@ -1,0 +1,9 @@
+[package]
+name = "proxy-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { path = "../proxy-core" }
+tokio = { version = "1.49.0", features = ["full"] }
+fern = "0.7.1"
