@@ -1,5 +1,6 @@
 use anyhow::Result;
-use anyhow::anyhow;
+
+#[cfg(target_os = "macos")]
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::LazyLock;
@@ -13,7 +14,7 @@ pub fn enable_socks5_system_proxy(host: &str, port: u16) -> Result<()> {
         let settings =
             HKCU.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")?;
         settings.set_value("ProxyEnable", &1u32)?;
-        let proxy_server = format!("{}:{}", host, port);
+        let proxy_server = format!("socks={}:{}", host, port);
         settings.set_value("ProxyServer", &proxy_server)?;
     }
     #[cfg(target_os = "macos")]
@@ -64,7 +65,7 @@ pub fn disalbe_socks5_system_proxy() -> Result<()> {
         let settings =
             HKCU.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")?;
         settings.set_value("ProxyEnable", &0u32)?;
-        settings.set_value("ProxyServer", "")?;
+        settings.set_value("ProxyServer", &"")?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -92,6 +93,7 @@ pub fn disalbe_socks5_system_proxy() -> Result<()> {
 
 #[cfg(target_os = "macos")]
 const MACOS_ACTIVE_NETWORK_SERVICE: LazyLock<String> = LazyLock::new(get_active_network_service);
+#[cfg(target_os = "macos")]
 fn get_active_network_service() -> String {
     let output = Command::new("route").args(["get default"]).output().expect("获取默认路由出错");
     let output_str = String::from_utf8_lossy(&output.stdout);

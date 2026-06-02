@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 mod proxy_gui;
 mod system_proxy;
 mod iced_logger;

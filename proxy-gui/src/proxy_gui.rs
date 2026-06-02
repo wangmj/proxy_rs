@@ -1,16 +1,15 @@
 use iced::font::Weight;
+use iced::widget::rule;
 use iced::widget::text::LineHeight;
-use iced::widget::{Rule, rule};
 use proxy_core::{
     InBoundTypeConfig, factory::inbound_factory::InBoundFactory, get_config,
     traits::proxy_inbound::InBoundProxy,
 };
-use std::env;
 use std::sync::Arc;
 
 use anyhow::Result;
-use iced::widget::{Column, Space, checkbox, column, container, scrollable, text, text::Shaping};
-use iced::{Color, Element, Font, Length, Subscription, Task, Theme};
+use iced::widget::{ Space, checkbox, column, container, scrollable, text, text::Shaping};
+use iced::{Color, Element, Font, Length, Subscription, Task};
 
 use crate::iced_logger;
 use crate::system_proxy;
@@ -67,7 +66,6 @@ impl ProxyGUI {
                 .color(color)
                 .shaping(Shaping::Advanced)
                 .wrapping(text::Wrapping::WordOrGlyph)
-                // .line_height(LineHeight::Relative(1.1))
                 .width(Length::Fill)
                 .into()
         });
@@ -102,11 +100,10 @@ impl ProxyGUI {
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::Start => {
-                log::info!("starting...");
                 let proxy = self.proxy.clone();
                 Task::perform(
                     async move {
-                        log::info!("starting...");
+                        log::info!("启动中..");
                         let port = match &**get_config().inbound() {
                             InBoundTypeConfig::Socks5(socks_in_bound_config) => {
                                 socks_in_bound_config.port()
@@ -115,23 +112,26 @@ impl ProxyGUI {
                                 ethan_in_bound_config.port()
                             }
                         };
-                        if system_proxy::enable_socks5_system_proxy("127.0.0.1", port).is_ok() {
-                            tokio::spawn(async move {
-                                proxy.start().await;
-                            });
-                           return true;
+                        match system_proxy::enable_socks5_system_proxy("127.0.0.1", port) {
+                            Ok(_) => {
+                                log::info!("系统代理设置成功");
+                                tokio::spawn(async move {
+                                    proxy.start().await;
+                                });
+                                log::info!("代理启动成功");
+                                return true;
+                            }
+                            Err(err) => {
+                                log::error!("系统代理设置失败, {err}");
+                                return false;
+                            }
                         }
-                        return false;
                     },
-                    |flag| if flag{
-                        Message::Started
-                    }else{
-                        Message::Stopped
-                    },
+                    |flag| if flag { Message::Started } else { Message::Stopped },
                 )
             }
             Message::Stop => {
-                log::info!("stoping..");
+                log::info!("停止中...");
                 let proxy = self.proxy.clone();
                 Task::perform(
                     async move {
@@ -146,10 +146,13 @@ impl ProxyGUI {
                 Task::none()
             }
             Message::Stopped => {
-                if system_proxy::disalbe_socks5_system_proxy().is_ok() {
-                    log::info!("代理关闭成功...");
-                } else {
-                    log::info!("代理关闭失败...");
+                match system_proxy::disalbe_socks5_system_proxy() {
+                    Ok(_) => {
+                        log::info!("系统代理关闭成功...");
+                    }
+                    Err(err) => {
+                        log::error!("系统代理关闭失败,{err}");
+                    }
                 }
                 self.system_proxy_enabled = false;
                 Task::none()

@@ -1,14 +1,14 @@
 {
     //windows
     // 1. 让 analyzer 以 Windows 为主 target（这样 Windows 代码不灰、winreg 有提示）
-    // "rust-analyzer.cargo.target": "x86_64-pc-windows-msvc",
-    // // 2. 强制开启 windows feature → winreg 被加载
-    // "rust-analyzer.cargo.features": ["windows"],
+    "rust-analyzer.cargo.target": "x86_64-pc-windows-msvc",
+    // 2. 强制开启 windows feature → winreg 被加载
+    "rust-analyzer.cargo.features": ["windows"],
 
     //macos
-    "rust-analyzer.cargo.target": "aarch64-apple-darwin",
-    // 2. 强制开启 windows feature → winreg 被加载
-    "rust-analyzer.cargo.features": [],
+    // "rust-analyzer.cargo.target": "aarch64-apple-darwin",
+    // // 2. 强制开启 windows feature → winreg 被加载
+    // "rust-analyzer.cargo.features": [],
 
     //linux
     //  "rust-analyzer.cargo.target": "x86_64-unknown-linux-gnu",
