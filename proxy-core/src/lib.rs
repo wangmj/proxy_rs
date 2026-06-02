@@ -4,7 +4,6 @@ pub mod dns_resolver;
 pub mod ethan;
 pub mod factory;
 pub mod socks;
-pub mod start_args;
 pub mod traits;
 
 mod geoip_helper;
@@ -12,10 +11,9 @@ mod utils;
 
 use std::fmt::{Debug, Display};
 
-// pub use app_config::app_config::{APP_CONFIG, AppConfig};
 pub use app_config::config::*;
 pub use app_config::*;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::broadcast::{Receiver, Sender};
 
 #[derive(Debug)]
 pub enum ProxyError {
@@ -69,14 +67,14 @@ impl Display for ProxyError {
 impl std::error::Error for ProxyError {}
 
 
-pub fn shutdown_listener() -> Receiver<()> {
+pub fn switch_listener() -> (Sender<()>,Receiver<()>) {
     let (sender, rev) = tokio::sync::broadcast::channel(1);
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to listen ctrl+c");
-        log::info!("shutdown......");
-        let _ = sender.send(());
-    });
-    rev
+    // tokio::spawn(async move {
+    //     tokio::signal::ctrl_c()
+    //         .await
+    //         .expect("failed to listen ctrl+c");
+    //     log::info!("shutdown......");
+    //     let _ = sender.send(());
+    // });
+    (sender,rev)
 }

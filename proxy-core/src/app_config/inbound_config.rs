@@ -1,16 +1,19 @@
 use std::path::PathBuf;
 
-use serde::{
-    Deserialize,
-};
+use serde::Deserialize;
 
 #[derive(Debug, serde::Deserialize, PartialEq)]
-#[serde(tag="protocol",rename_all="lowercase")] // 可选：避免枚举项的字段冲突，仅在枚举项有不同结构体字段时需要
+#[serde(tag = "protocol", rename_all = "lowercase")] // 可选：避免枚举项的字段冲突，仅在枚举项有不同结构体字段时需要
 pub enum InBoundTypeConfig {
     Socks5(SocksInBoundConfig),
     Ethan(EthanInBoundConfig),
 }
-#[derive(Debug, Clone, serde::Deserialize, PartialEq)]
+impl Default for InBoundTypeConfig {
+    fn default() -> Self {
+        Self::Socks5(SocksInBoundConfig::default())
+    }
+}
+#[derive(Debug, Default, Clone, serde::Deserialize, PartialEq)]
 pub struct SocksInBoundConfig {
     port: u16,
     uid: Option<String>,
@@ -18,11 +21,7 @@ pub struct SocksInBoundConfig {
 }
 impl SocksInBoundConfig {
     pub fn new(port: u16, uid: Option<String>, pwd: Option<String>) -> Self {
-        Self {
-            port,
-            uid,
-            pwd,
-        }
+        Self { port, uid, pwd }
     }
     pub fn port(&self) -> u16 {
         self.port
@@ -33,10 +32,7 @@ impl SocksInBoundConfig {
     pub fn pwd(&self) -> Option<&str> {
         self.pwd.as_deref()
     }
-   
 }
-
-
 
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]
 pub struct EthanInBoundConfig {
@@ -47,12 +43,7 @@ pub struct EthanInBoundConfig {
 }
 impl EthanInBoundConfig {
     pub fn new(port: u16, uid: String, pwd: String, tls_config: Option<TlsServerConfig>) -> Self {
-        Self {
-            port,
-            uid,
-            pwd,
-            tls: tls_config,
-        }
+        Self { port, uid, pwd, tls: tls_config }
     }
     pub fn tls(&self) -> &Option<TlsServerConfig> {
         &self.tls
@@ -80,7 +71,7 @@ pub struct TlsServerConfig {
 mod test {
     use std::{error::Error, path::PathBuf};
 
-    use crate::{ InBoundTypeConfig};
+    use crate::InBoundTypeConfig;
 
     #[test]
     fn inbound_toml_parse_test() -> Result<(), Box<dyn std::error::Error>> {

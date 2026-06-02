@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::net::TcpStream;
 
-use crate::APP_CONFIG;
+use crate::{ get_config};
 
 pub(crate) async fn resolve_dns_pick_fastet(domain_name: impl AsRef<str>) -> Result<IpAddr> {
     match resolve_dns(domain_name).await {
@@ -36,7 +36,7 @@ fn get_dns_resolver() -> Resolver<GenericConnector<TokioRuntimeProvider>> {
     // opts.use_hosts_file = hickory_resolver::config::ResolveHosts:;
     opts.edns0 = false;
     let mut resolver_config = ResolverConfig::new();
-    match &APP_CONFIG.dns().server {
+    match &get_config().dns().server {
         Some(ss) if !ss.is_empty() => {
             ss.iter()
                 .map_while(|item| {

@@ -4,4 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-core = { path = "../proxy-core" }
+anyhow = "1.0.102"
+proxy-core = { path = "../proxy-core" }
+iced = { version = "0.14.0", features = ["tokio"] }
+tokio = { version = "1.52.3", features = ["full"] }
+futures = "0.3"
+
+
+# [target.'cfg(windows)'.dependencies]
+winreg = { version = "0.56.0", optional = true }
+log = "0.4.30"
+chrono = "0.4.44"
+
+[features]
+default = []
+windows = ["dep:winreg"]

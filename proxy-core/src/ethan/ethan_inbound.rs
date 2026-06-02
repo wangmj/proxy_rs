@@ -12,16 +12,16 @@ use async_trait::async_trait;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::broadcast::Receiver,
+    sync::broadcast::{Receiver, Sender},
     task::JoinSet,
 };
 use tokio_rustls::rustls::ServerConfig;
 
 use crate::{
-    APP_CONFIG, EthanInBoundConfig, ProxyError,
+    EthanInBoundConfig, ProxyError,
     ethan::ethan_proto::{AuthRequest, ConnectRequest, EthanResponse},
     factory::outbound_factory::OutBoundFactory,
-    shutdown_listener,
+    get_config, switch_listener,
     traits::{
         async_read_write::AsyncReadWrite, proxy_inbound::InBoundProxy,
         proxy_outbound::AsyncReadWriteStream,
@@ -34,12 +34,13 @@ static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 pub struct EthanInBound {
     config: Arc<EthanInBoundConfig>,
     shutdown_rev: Receiver<()>,
+    shutdown_sender: Sender<()>,
 }
 
 impl EthanInBound {
     pub fn new(config: Arc<EthanInBoundConfig>) -> Self {
-        let shutdown_rev = shutdown_listener();
-        Self { config, shutdown_rev }
+        let (shutdown_sender, shutdown_rev) = switch_listener();
+        Self { config, shutdown_rev, shutdown_sender }
     }
 }
 
@@ -94,6 +95,10 @@ impl InBoundProxy for EthanInBound {
                 log::error!("wait for connection timeout, will shutdown force..");
             }
         }
+    }
+    async fn stop(&self) {
+        log::info!("shuttingdown...");
+        self.shutdown_sender.send(()).unwrap();
     }
 }
 
@@ -187,7 +192,7 @@ impl EthanInBoundConnector {
         log::trace!("received connect server: {:?}", request);
 
         let output_config =
-            APP_CONFIG.get_forward_to_remote(&request).await.expect("未找到匹配的路由");
+            get_config().get_forward_to_remote(&request).await.expect("未找到匹配的路由");
         let output_bound = OutBoundFactory::get(&output_config);
         let (response, result) = match output_bound.connect_server(request).await {
             Ok(out_stream) => {

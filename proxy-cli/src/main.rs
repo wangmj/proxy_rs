@@ -1,10 +1,14 @@
+mod start_args;
+
+use crate::start_args::StartArgs;
+use clap::Parser;
+use proxy_core::{AppConfig, factory::inbound_factory::InBoundFactory, get_config, inject_config};
 use std::{
+    env,
     fs::{self},
     io, panic,
     path::Path,
 };
-
-use core::{APP_CONFIG, factory::inbound_factory::InBoundFactory};
 
 fn main() -> io::Result<()> {
     program_init();
@@ -15,18 +19,26 @@ fn main() -> io::Result<()> {
         .max_blocking_threads(512) // default value
         .build()?;
     runtime.block_on(async {
-        let inbound = InBoundFactory::get(APP_CONFIG.inbound().clone(), APP_CONFIG.dns().clone());
+        let inbound =
+            InBoundFactory::get(get_config().inbound().clone(), get_config().dns().clone());
         inbound.start().await;
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.expect("failed to listen ctrl+c");
+            inbound.stop().await;
+        });
     });
     Ok(())
 }
 //整体的初始化
 fn program_init() {
+    let config = init_config().unwrap();
+    inject_config(config);
     init_logger();
 }
 //初始化日志
 fn init_logger() {
-    let log_config = APP_CONFIG.log();
+    let appconfig = get_config();
+    let log_config = appconfig.log();
     let lf = log_config.level_filter().expect("log level failed!");
     let path = log_config.access_path();
 
@@ -56,4 +68,16 @@ fn touch_file_if_noexist(p: impl AsRef<Path>) {
             panic!("创建文件：{}失败，原因：{}", p.display(), err);
         }
     }
+}
+
+fn init_config() -> Result<AppConfig, String> {
+    let args = StartArgs::parse();
+    let config_path = match args.config() {
+        Some(path) => path.clone(),
+        None => {
+            let current_dir = env::current_dir().expect("get current directory failed!");
+            current_dir.join("config.toml")
+        }
+    };
+    AppConfig::open_readfile(config_path).map_err(|e| format!("{e}"))
 }

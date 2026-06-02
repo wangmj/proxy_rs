@@ -8,12 +8,12 @@ use std::{
     sync::LazyLock,
 };
 
-use crate::{APP_CONFIG, dns_resolver, ethan::ethan_proto::DstType, geoip_helper::GEOIP_READER};
+use crate::{get_config, dns_resolver, ethan::ethan_proto::DstType, geoip_helper::GEOIP_READER};
 
 static DEFAULT_ROUTE_CONFIG: LazyLock<RouteConfig> =
     LazyLock::new(|| RouteConfig::new("*".to_string(), "Direct", RuleType::Default));
 
-#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Default,PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
 pub struct RouteManager(Vec<RouteConfig>);
 impl RouteManager {
@@ -65,7 +65,7 @@ impl RouteManager {
         //否则，直接将匹配到默认规则
         match config {
             Some(config) => Some(config),
-            None => match APP_CONFIG.dns().resolver {
+            None => match get_config().dns().resolver {
                 crate::dns_config::DNSResolver::Local => {
                     dns_resolver::resolve_dns_pick_fastet(name)
                         .await

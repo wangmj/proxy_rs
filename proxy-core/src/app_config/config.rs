@@ -1,8 +1,9 @@
 use anyhow::Result;
 use anyhow::anyhow;
+use arc_swap::ArcSwap;
 use json_comments::StripComments;
 use std::sync::Arc;
-use std::{env, path::Path, sync::LazyLock};
+use std::{ path::Path, sync::LazyLock};
 
 use super::dns_config::DnsConfig;
 use super::inbound_config::*;
@@ -12,32 +13,42 @@ use super::route_config::RouteManager;
 
 use crate::ethan::ethan_proto::ConnectRequest;
 
-pub static APP_CONFIG: LazyLock<Arc<AppConfig>> = LazyLock::new(get_app_config_from_args);
+static APP_CONFIG: LazyLock<ArcSwap<AppConfig>> =
+    LazyLock::new(|| ArcSwap::from_pointee(AppConfig::default()));
 
-fn get_app_config_from_args() -> Arc<AppConfig> {
-    #[cfg(not(test))]
-    {
-        use crate::start_args::StartArgs;
-        use clap::Parser;
-        let args = StartArgs::parse();
-        let config_path = match args.config() {
-            Some(path) => path.clone(),
-            None => {
-                let current_dir = env::current_dir().expect("get current directory failed!");
-                current_dir.join("config.toml")
-            }
-        };
-        AppConfig::open_readfile(config_path).expect("read config failed!").into()
-    }
-    #[cfg(test)]
-    {
-        let cur_dir = env::current_dir().expect("get current directory failed!");
-        let config_path = cur_dir.join("examples/config/client.toml");
-        AppConfig::open_readfile(config_path).expect("read config failed!").into()
-    }
+//由需要的地方注入
+pub fn inject_config(cfg: AppConfig) {
+    APP_CONFIG.store(Arc::new(cfg));
 }
 
-#[derive(Debug, serde::Deserialize)]
+pub fn get_config() -> Arc<AppConfig> {
+    APP_CONFIG.load_full()
+}
+
+// fn get_app_config_from_args() -> Arc<AppConfig> {
+//     #[cfg(not(test))]
+//     {
+//         use crate::start_args::StartArgs;
+//         use clap::Parser;
+//         let args = StartArgs::parse();
+//         let config_path = match args.config() {
+//             Some(path) => path.clone(),
+//             None => {
+//                 let current_dir = env::current_dir().expect("get current directory failed!");
+//                 current_dir.join("config.toml")
+//             }
+//         };
+//         AppConfig::open_readfile(config_path).expect("read config failed!").into()
+//     }
+//     #[cfg(test)]
+//     {
+//         let cur_dir = env::current_dir().expect("get current directory failed!");
+//         let config_path = cur_dir.join("examples/config/client.toml");
+//         AppConfig::open_readfile(config_path).expect("read config failed!").into()
+//     }
+// }
+
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct AppConfig {
     log: LogConfig,
     // #[serde(deserialize_with = "deserialize_protocol")]

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use clap::{Parser};
+// use clap::{Parser};
+use clap::Parser;
 
 #[derive(Debug,Parser)]
 pub struct StartArgs{
@@ -10,4 +11,9 @@ impl StartArgs{
     pub fn config(&self)->Option<&PathBuf>{
         self.config.as_ref()
     }
+}
+
+#[derive(Debug,Parser)]
+pub struct  StartArg{
+    config:Option<PathBuf>
 }

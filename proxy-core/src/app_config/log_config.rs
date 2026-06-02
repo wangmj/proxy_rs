@@ -1,10 +1,9 @@
 use anyhow::Result;
 use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
+     path::{Path, PathBuf}, str::FromStr
 };
 
-#[derive(Debug,  serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct LogConfig {
     access: AccessLogConfig,
     // error: ErrorLogConfig,
@@ -23,7 +22,7 @@ impl LogConfig {
     }
 }
 
-#[derive(Debug,  serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct AccessLogConfig {
     level: String,
     path: PathBuf,

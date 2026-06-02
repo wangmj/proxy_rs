@@ -5,17 +5,17 @@ use std::{
 
 use anyhow::Result;
 
-use crate::{ProxyError, dns_config::DnsConfig, shutdown_listener};
+use crate::{ProxyError, dns_config::DnsConfig, switch_listener};
 use async_trait::async_trait;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::broadcast::Receiver,
+    sync::broadcast::{Receiver, Sender},
     task::JoinSet,
 };
 
 use crate::{
-    APP_CONFIG, SocksInBoundConfig,
+    get_config, SocksInBoundConfig,
     ethan::ethan_proto::ConnectRequest,
     factory::outbound_factory::*,
     socks::socks5_proto::{
@@ -31,12 +31,13 @@ pub struct Socks5InBound {
     config: Arc<SocksInBoundConfig>,
     dns_config: Arc<DnsConfig>,
     shutdown_rev: Receiver<()>,
+    shutdown_sender:Sender<()>,
 }
 
 impl Socks5InBound {
     pub fn new(config: Arc<SocksInBoundConfig>, dns_config: Arc<DnsConfig>) -> Self {
-        let shutdown_rev = shutdown_listener();
-        Self { config, dns_config, shutdown_rev }
+        let (shutdown_sender,shutdown_rev) = switch_listener();
+        Self { config, dns_config, shutdown_rev,shutdown_sender }
     }
 }
 
@@ -98,6 +99,10 @@ impl InBoundProxy for Socks5InBound {
                 log::error!("wait for connection timeout, will shutdown force..");
             }
         }
+    }
+    async fn stop(&self){
+        log::info!("shuttingdown...");
+        self.shutdown_sender.send(()).unwrap();
     }
 }
 
@@ -187,7 +192,7 @@ impl Socks5InBoundHanlder {
 
         match cmd {
             Cmd::Connect => {
-                let outbound_config = APP_CONFIG.get_forward_to_remote(&connect_request).await?;
+                let outbound_config = get_config().get_forward_to_remote(&connect_request).await?;
 
                 match OutBoundFactory::get(&outbound_config).connect_server(connect_request).await {
                     Ok(mut outbound_stream) => {

@@ -1,3 +1,3 @@
 [workspace]
-members = ["proxy-cli","proxy-core", "proxy-gui"]
 resolver = "3"
+members = ["proxy-cli","proxy-core", "proxy-gui"]
