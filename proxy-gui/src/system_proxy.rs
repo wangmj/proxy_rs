@@ -6,15 +6,19 @@ use std::process::Command;
 use std::sync::LazyLock;
 
 #[cfg(windows)]
-use winreg::HKCU;
+use winreg::{HKCU, enums::*};
 
 pub fn enable_socks5_system_proxy(host: &str, port: u16) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let settings =
-            HKCU.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")?;
+        use winreg::enums;
+
+        let settings = HKCU.open_subkey_with_flags(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            enums::KEY_ALL_ACCESS,
+        )?;
         settings.set_value("ProxyEnable", &1u32)?;
-        let proxy_server = format!("socks={}:{}", host, port);
+        let proxy_server = format!("socks5={}:{}", host, port);
         settings.set_value("ProxyServer", &proxy_server)?;
     }
     #[cfg(target_os = "macos")]
@@ -62,8 +66,10 @@ pub fn enable_socks5_system_proxy(host: &str, port: u16) -> Result<()> {
 pub fn disalbe_socks5_system_proxy() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let settings =
-            HKCU.open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")?;
+        let settings = HKCU.open_subkey_with_flags(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            enums::KEY_ALL_ACCESS,
+        )?;
         settings.set_value("ProxyEnable", &0u32)?;
         settings.set_value("ProxyServer", &"")?;
     }
